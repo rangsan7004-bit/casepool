@@ -1075,15 +1075,25 @@ function SalesCurrentCases({currentUser,users}){
   const [cases,setCases]=useState([]);
   const [loading,setLoading]=useState(true);
   const [sel,setSel]=useState(null);
-  const [showAdd,setShowAdd]=useState(false);
 
-  const load=useCallback(()=>{setLoading(true);api('getCases',{sales:currentUser.name}).then(r=>{if(r.success)setCases(r.data||[]);setLoading(false);});},[currentUser.name]);
+  const CLOSED_STATUSES=['ปิดเคส','รีเจค','ได้รถจากที่อื่น','โยนเคส','ปล่อยแล้ว'];
+  const load=useCallback(()=>{
+    setLoading(true);
+    // ดึงเคสทั้งหมดของตัวเอง แล้ว filter เฉพาะที่ยังไม่ปิด (active)
+    api('getCases',{sales:currentUser.name,all:'true'}).then(r=>{
+      if(r.success){
+        const active=(r.data||[]).filter(c=>!CLOSED_STATUSES.includes(c.status));
+        setCases(active);
+      }
+      setLoading(false);
+    });
+  },[currentUser.name]);
   useEffect(()=>{load();},[load]);
 
   return <div className="page">
     <div className="page-hd">
-      <div><div className="page-title">📋 เคสของฉัน</div><div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>{cases.length} เคส</div></div>
-      <button className="btn btn-primary" onClick={()=>setShowAdd(true)}><Ico.plus/> เพิ่มลูกค้า</button>
+      <div><div className="page-title">📋 เคสของฉัน</div><div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>{cases.length} เคส ที่กำลังดูแลอยู่</div></div>
+      <button className="btn btn-ghost" onClick={load}>🔄</button>
     </div>
     {loading?<Loading/>:<div>
       {cases.length===0?<div style={{textAlign:'center',padding:40,color:'var(--text2)'}}>ยังไม่มีเคส</div>:
@@ -1095,10 +1105,12 @@ function SalesCurrentCases({currentUser,users}){
         <div style={{fontWeight:600,marginBottom:4,fontSize:15}}>{c.customername}</div>
         <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>📞 {c.contact||'-'} · 🕐 {String(c.updatedat||c.createdat||'').split(' ')[0]||'-'}</div>
         {c.report&&<div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'6px 10px',borderRadius:6,marginTop:6,lineHeight:1.5}}>{String(c.report).slice(0,100)}{String(c.report).length>100?'...':''}</div>}
+        <div style={{marginTop:10,display:'flex',gap:6}}>
+          <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--yellow)'}} onClick={e=>{e.stopPropagation();if(window.confirm('ส่งเคส '+c.caseid+' ขึ้นตลาด?'))api('sendToMarket',{caseId:c.caseid,sales:currentUser.name}).then(()=>load());}}>⬆ ส่งตลาด</button>
+        </div>
       </div>)}
     </div>}
     {sel&&<CaseModal caseData={sel} users={users} currentUser={currentUser} onClose={()=>setSel(null)} onUpdated={load}/>}
-    {showAdd&&<AddCaseModal users={users} currentUser={currentUser} onClose={()=>setShowAdd(false)} onAdded={load}/>}
   </div>;
 }
 
