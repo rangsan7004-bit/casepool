@@ -1198,8 +1198,165 @@ function AdminMarket({currentUser,users}){
 }
 
 // ============================================================
-// ADMIN — DASHBOARD (Charts)
+// EXPORT UTILITIES
 // ============================================================
+function csvEscape(v){
+  const s=String(v==null?'':v).replace(/"/g,'""');
+  return /[,"\n\r]/.test(s)?`"${s}"`:s;
+}
+function downloadCSV(rows, filename){
+  const bom='\uFEFF'; // UTF-8 BOM สำหรับ Excel ภาษาไทย
+  const csv=bom+rows.map(r=>r.map(csvEscape).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function ExportModal({allCases,salesList,onClose}){
+  const [type,setType]=useState('cases_month');   // ประเภทรายงาน
+  const [salesFilter,setSalesFilter]=useState('all');
+  const [statusFilter,setStatusFilter]=useState('all');
+  const [exporting,setExporting]=useState(false);
+  const [done,setDone]=useState(false);
+
+  const now=new Date();
+  const pre=String(now.getFullYear()).slice(-2)+String(now.getMonth()+1).padStart(2,'0');
+  const monthLabel=`${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+
+  function doExport(){
+    setExporting(true);
+    setTimeout(()=>{
+      try{
+        let cases=[...allCases];
+
+        // กรอง
+        if(type==='cases_month') cases=cases.filter(c=>String(c.caseid).startsWith(pre));
+        if(type==='cases_all')   {} // ทั้งหมด
+        if(salesFilter!=='all')  cases=cases.filter(c=>c.sales===salesFilter);
+        if(statusFilter!=='all') cases=cases.filter(c=>c.status===statusFilter);
+
+        if(type==='summary_sales'){
+          // รายงานสรุปต่อเซลส์
+          const rows=[['เซลส์','เคสปัจจุบัน','รับตลาด','ปล่อยแล้ว']];
+          salesList.forEach(s=>rows.push([s.name,s.currentCases||0,s.claimedCases||0,s.sold||0]));
+          downloadCSV(rows,`สรุปรายเซลส์_${monthLabel.replace('/','_')}.csv`);
+        } else if(type==='summary_status'){
+          // รายงานสรุปสถานะ
+          const map={};
+          cases.forEach(c=>{map[c.status]=(map[c.status]||0)+1;});
+          const rows=[['สถานะ','จำนวน','%']];
+          const total=cases.length||1;
+          Object.entries(map).sort((a,b)=>b[1]-a[1]).forEach(([st,cnt])=>{
+            rows.push([st,cnt,`${Math.round(cnt/total*100)}%`]);
+          });
+          rows.push(['รวม',cases.length,'100%']);
+          downloadCSV(rows,`สรุปสถานะ_${monthLabel.replace('/','_')}.csv`);
+        } else {
+          // รายงานเคสทั้งหมด
+          const headers=['รหัสเคส','ชื่อลูกค้า','ติดต่อ','สถานะ','เซลส์','รีพอร์ต','วันที่สร้าง','อัปเดตล่าสุด'];
+          const rows=[headers,...cases.map(c=>[
+            c.caseid||'',
+            c.customername||'',
+            (c.contact||'').startsWith('data:')?'[QR Image]':formatContact(c.contact)||'',
+            c.status||'',
+            c.sales||'',
+            c.report||'',
+            c.createdat||'',
+            c.updatedat||''
+          ])];
+          const label=type==='cases_month'?`เดือน${monthLabel}`:'ทั้งหมด';
+          downloadCSV(rows,`รายงานเคส_${label.replace('/','_')}.csv`);
+        }
+        setDone(true);
+      }catch(e){ alert('เกิดข้อผิดพลาด: '+e); }
+      setExporting(false);
+    },300);
+  }
+
+  const TYPES=[
+    {k:'cases_month', l:'📋 เคสเดือนนี้',       desc:'เคสทั้งหมดของเดือน'+monthLabel},
+    {k:'cases_all',   l:'📦 เคสทั้งหมด',         desc:'ทุกเคสในระบบ (อาจช้าถ้ามีเยอะ)'},
+    {k:'summary_sales',l:'👤 สรุปรายเซลส์',      desc:'จำนวนเคส / ปล่อยแล้ว ต่อ Sales'},
+    {k:'summary_status',l:'🏷 สรุปสถานะ',         desc:'จำนวนเคสแต่ละสถานะ'},
+  ];
+
+  return <div className="overlay" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div className="modal" style={{maxWidth:440}}>
+      <div className="modal-hd">
+        <span style={{fontWeight:700,fontSize:15}}>📥 Export รายงาน</span>
+        <button className="btn btn-ghost" style={{padding:'4px 8px'}} onClick={onClose}><Ico.x/></button>
+      </div>
+      <div className="modal-bd">
+        {done?
+          <div style={{textAlign:'center',padding:'20px 0'}}>
+            <div style={{fontSize:48,marginBottom:12}}>✅</div>
+            <div style={{fontWeight:700,fontSize:15,marginBottom:6}}>ดาวน์โหลดสำเร็จ!</div>
+            <div style={{fontSize:13,color:'var(--text2)',marginBottom:20}}>ไฟล์ CSV รองรับภาษาไทย เปิดด้วย Excel ได้เลย</div>
+            <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+              <button className="btn btn-ghost" onClick={()=>setDone(false)}>Export อีกครั้ง</button>
+              <button className="btn btn-primary" onClick={onClose}>ปิด</button>
+            </div>
+          </div>:
+          <>
+            {/* เลือกประเภท */}
+            <div className="form-group">
+              <label>ประเภทรายงาน</label>
+              <div style={{display:'grid',gap:8}}>
+                {TYPES.map(t=><div key={t.k}
+                  onClick={()=>setType(t.k)}
+                  style={{padding:'10px 14px',borderRadius:8,border:`2px solid ${type===t.k?'var(--blue)':'var(--border)'}`,
+                    background:type===t.k?'rgba(88,166,255,.08)':'var(--bg3)',cursor:'pointer',transition:'all .15s'}}>
+                  <div style={{fontWeight:600,fontSize:13}}>{t.l}</div>
+                  <div style={{fontSize:11,color:'var(--text2)',marginTop:2}}>{t.desc}</div>
+                </div>)}
+              </div>
+            </div>
+
+            {/* filter เพิ่มเติม (เฉพาะ cases) */}
+            {(type==='cases_month'||type==='cases_all')&&<>
+              <div className="form-group">
+                <label>กรองเซลส์</label>
+                <select value={salesFilter} onChange={e=>setSalesFilter(e.target.value)}>
+                  <option value="all">ทุกเซลส์</option>
+                  {salesList.map(s=><option key={s.name} value={s.name}>{s.name}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>กรองสถานะ</label>
+                <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>
+                  <option value="all">ทุกสถานะ</option>
+                  {STATUSES.map(s=><option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'8px 12px',borderRadius:6,marginBottom:4}}>
+                📊 พบ <strong style={{color:'var(--blue)'}}>
+                  {allCases.filter(c=>{
+                    if(type==='cases_month'&&!String(c.caseid).startsWith(pre)) return false;
+                    if(salesFilter!=='all'&&c.sales!==salesFilter) return false;
+                    if(statusFilter!=='all'&&c.status!==statusFilter) return false;
+                    return true;
+                  }).length}
+                </strong> เคส ที่จะ export
+              </div>
+            </>}
+          </>
+        }
+      </div>
+      {!done&&<div className="modal-ft">
+        <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
+        <button className="btn btn-green" onClick={doExport} disabled={exporting}
+          style={{display:'flex',alignItems:'center',gap:6}}>
+          {exporting?<><span className="spin" style={{width:14,height:14,marginRight:0}}/> กำลัง Export...</>:'⬇️ ดาวน์โหลด CSV'}
+        </button>
+      </div>}
+    </div>
+  </div>;
+}
+
+
 function useChartJs(cb, deps){
   useEffect(()=>{
     if(window.Chart){ cb(); return; }
@@ -1255,6 +1412,7 @@ function AdminDashboard({currentUser}){
   const [allCases,setAllCases]=useState([]);
   const [loading,setLoading]=useState(true);
   const [tab,setTab]=useState('overview');
+  const [showExport,setShowExport]=useState(false);
 
   const load=useCallback(()=>{
     cacheClear(['getDashboard','getCases']);
@@ -1291,8 +1449,14 @@ function AdminDashboard({currentUser}){
   return <div className="page">
     <div className="page-hd" style={{marginBottom:16}}>
       <div className="page-title">📊 แดชบอร์ด</div>
-      <button className="btn btn-ghost" onClick={load} style={{fontSize:13}}>🔄 รีเฟรช</button>
+      <div style={{display:'flex',gap:8}}>
+        <button className="btn btn-ghost" onClick={()=>setShowExport(true)} style={{fontSize:13,display:'flex',alignItems:'center',gap:5}}>
+          ⬇️ Export
+        </button>
+        <button className="btn btn-ghost" onClick={load} style={{fontSize:13}}>🔄 รีเฟรช</button>
+      </div>
     </div>
+    {showExport&&<ExportModal allCases={allCases} salesList={salesList} onClose={()=>setShowExport(false)}/>}
 
     {/* KPI row */}
     <div className="stat-grid" style={{marginBottom:20}}>
