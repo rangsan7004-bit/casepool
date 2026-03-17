@@ -1095,7 +1095,13 @@ function AdminMarket({currentUser,users}){
 
   function getDateBadge(c){
     const id=String(c.ID||'');
-    if(id.length>=6){const yy=id.slice(0,2),mm=id.slice(2,4);return `25${yy} (พ.ศ.${parseInt('25'+yy)+543-2500})`;}
+    if(id.length>=6){
+      const yy=id.slice(0,2),mm=id.slice(2,4);
+      const year=2000+parseInt(yy);
+      const monthNames=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+      const monthName=monthNames[parseInt(mm)-1]||mm;
+      return `${monthName} ${year}`;
+    }
     return '';
   }
 
@@ -1348,7 +1354,13 @@ function SalesMarket({currentUser}){
 
   function getDateBadge(c){
     const id=String(c.ID||'');
-    if(id.length>=4){const yy=id.slice(0,2),mm=id.slice(2,4);return `25${yy}`;}
+    if(id.length>=4){
+      const yy=id.slice(0,2),mm=id.slice(2,4);
+      const year=2000+parseInt(yy);
+      const monthNames=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+      const monthName=monthNames[parseInt(mm)-1]||mm;
+      return `${monthName} ${year}`;
+    }
     return '';
   }
 
@@ -1697,38 +1709,60 @@ function SalesDashboard({currentUser}){
   if(loading)return <div className="page"><Loading/></div>;
   if(!data)return <div className="page"><p>ไม่พบข้อมูล</p></div>;
 
-  // คำนวณวันทำงาน
-  function calcDaysWorked(startdate){
-    if(!startdate) return null;
+  // แปลง startdate จาก Google Sheets ซึ่งอาจส่งมาหลาย format:
+  // 1) dd/MM/yyyy เช่น "08/08/2021"
+  // 2) ISO string เช่น "2021-08-08T00:00:00.000Z"
+  // 3) Sheets serial number เช่น 44416 (วันที่นับจาก 30/12/1899)
+  function parseStartDate(startdate){
+    if(!startdate&&startdate!==0) return null;
     const s=String(startdate).trim();
-    let d;
-    // รองรับ dd/MM/yyyy หรือ yyyy-MM-dd
+    if(!s||s==='') return null;
+
+    // Sheets serial number (pure number)
+    if(/^\d{4,6}$/.test(s)){
+      const serial=parseInt(s);
+      // Excel/Sheets epoch: Jan 1 1900 = serial 1 (แต่มี bug leap year 1900)
+      const d=new Date((serial-25569)*86400000); // แปลงเป็น Unix ms
+      if(!isNaN(d)) return d;
+    }
+
+    // dd/MM/yyyy หรือ d/M/yyyy
     if(s.includes('/')){
       const parts=s.split('/');
       if(parts.length>=3){
-        const [dd,mm,yyyy]=parts;
-        d=new Date(parseInt(yyyy),parseInt(mm)-1,parseInt(dd));
+        const p0=parseInt(parts[0]),p1=parseInt(parts[1]),p2=parseInt(parts[2]);
+        // ถ้า part[2] เป็นปีสี่หลัก → dd/MM/yyyy
+        if(parts[2].length===4){
+          const d=new Date(p2, p1-1, p0);
+          if(!isNaN(d)) return d;
+        }
+        // อาจเป็น MM/dd/yyyy
+        const d2=new Date(p2, p0-1, p1);
+        if(!isNaN(d2)) return d2;
       }
-    } else {
-      d=new Date(s);
     }
-    if(!d||isNaN(d)) return null;
+
+    // ISO หรือ format อื่นๆ ที่ Date() รองรับ
+    const d=new Date(s);
+    if(!isNaN(d)) return d;
+
+    return null;
+  }
+
+  function calcDaysWorked(startdate){
+    const d=parseStartDate(startdate);
+    if(!d) return null;
     const diff=Math.floor((Date.now()-d.getTime())/(1000*60*60*24));
     return diff>=0?diff:null;
   }
 
   function formatStartDate(startdate){
-    if(!startdate) return null;
-    const s=String(startdate).trim();
-    if(s.includes('/')){
-      const parts=s.split('/');
-      if(parts.length>=3) return `${parts[0]}/${parts[1]}/${parts[2]}`;
-    }
-    if(s.includes('-')){
-      const d=new Date(s);
-      if(!isNaN(d)) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
-    }
-    return s;
+    const d=parseStartDate(startdate);
+    if(!d) return null;
+    const dd=String(d.getDate()).padStart(2,'0');
+    const mm=String(d.getMonth()+1).padStart(2,'0');
+    const yyyy=d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
   }
 
   const startdate = userInfo?.startdate || currentUser.startdate;
