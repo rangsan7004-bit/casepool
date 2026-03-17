@@ -138,6 +138,9 @@ tr.clickable{cursor:pointer;}
 .loading{display:flex;align-items:center;justify-content:center;padding:60px;color:var(--text2);}
 .spin{display:inline-block;width:24px;height:24px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
+.skeleton{background:linear-gradient(90deg,var(--bg3) 25%,var(--bg4) 50%,var(--bg3) 75%);background-size:800px 100%;animation:shimmer 1.4s infinite;border-radius:6px;}
+
 .form-group{margin-bottom:14px;}
 .form-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:6px;font-weight:500;}
 .search-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
@@ -195,14 +198,57 @@ function formatContact(contact){
 }
 
 // ============================================================
-// API
+// API + CACHE LAYER
 // ============================================================
+const _cache = {};          // key → {data, ts}
+const CACHE_TTL = 30000;    // 30 วินาที
+
+function cacheKey(action, data){
+  return action + ':' + JSON.stringify(data||{});
+}
+function cacheGet(action, data){
+  const k = cacheKey(action, data);
+  const c = _cache[k];
+  if(c && (Date.now() - c.ts) < CACHE_TTL) return c.data;
+  return null;
+}
+function cacheSet(action, data, result){
+  _cache[cacheKey(action, data)] = {data: result, ts: Date.now()};
+}
+function cacheClear(patterns){
+  // ล้าง cache ที่เกี่ยวข้อง เช่น ['getCases','getDashboard']
+  (patterns||[]).forEach(p=>{
+    Object.keys(_cache).forEach(k=>{ if(k.startsWith(p)) delete _cache[k]; });
+  });
+}
+
+const CACHEABLE = ['getCases','getMarket','getUsers','getBookings','getDashboard','getNotifications','getClaimedCases'];
+// actions ที่ทำให้ cache invalidate
+const INVALIDATE_MAP = {
+  addCase:      ['getCases','getDashboard'],
+  updateCase:   ['getCases','getDashboard'],
+  sendToMarket: ['getCases','getMarket','getDashboard'],
+  claimCase:    ['getMarket','getClaimedCases','getDashboard'],
+  returnCase:   ['getMarket','getClaimedCases'],
+  updateClaimed:['getClaimedCases'],
+  closeMarketCase:['getMarket','getCases'],
+  adminChangeSales:['getCases'],
+  adminPullCase:['getCases'],
+  addBooking:   ['getBookings'],
+  updateBooking:['getBookings'],
+};
+
 async function api(action, data={}) {
-  if(!API_URL) {
-    // Demo mode
-    return demoApi(action, data);
-  }
+  if(!API_URL) return demoApi(action, data);
+
   const isGet = ['getCases','getMarket','getUsers','getBookings','getDashboard','getHistory','getNotifications','getClaimedCases','searchCases'].includes(action);
+
+  // ใช้ cache สำหรับ GET actions
+  if(CACHEABLE.includes(action)){
+    const cached = cacheGet(action, data);
+    if(cached) return cached;
+  }
+
   try {
     let url, opts;
     if(isGet) {
@@ -215,11 +261,22 @@ async function api(action, data={}) {
     }
     const r=await fetch(url, opts);
     const text=await r.text();
-    try{return JSON.parse(text);}catch(e){return {success:false,error:'Parse error: '+text.slice(0,100)};}
+    let result;
+    try{result=JSON.parse(text);}catch(e){result={success:false,error:'Parse error: '+text.slice(0,100)};}
+
+    // เก็บ cache และ invalidate
+    if(CACHEABLE.includes(action) && result.success) cacheSet(action, data, result);
+    if(INVALIDATE_MAP[action]) cacheClear(INVALIDATE_MAP[action]);
+
+    return result;
   } catch(e) {
     return {success:false,error:e.toString()};
   }
 }
+
+// warm-up: ping Apps Script ตอนโหลดหน้า เพื่อลด cold start
+if(API_URL){ setTimeout(()=>fetch(API_URL+'?action=ping',{method:'GET',mode:'cors'}).catch(()=>{}), 500); }
+
 
 // ============================================================
 // DEMO DATA (ใช้เมื่อยังไม่ได้ตั้งค่า API_URL)
@@ -396,6 +453,31 @@ function Modal({title,onClose,children,footer}){
 
 function Loading(){return <div className="loading"><span className="spin"/><span>กำลังโหลด...</span></div>;}
 
+// Skeleton card สำหรับ list ที่รอโหลด — ดูไม่กระตุก
+function SkeletonCards({n=3}){
+  return <div>{Array.from({length:n}).map((_,i)=>(
+    <div key={i} className="market-card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
+        <div className="skeleton" style={{width:90,height:18}}/>
+        <div className="skeleton" style={{width:70,height:18,borderRadius:20}}/>
+      </div>
+      <div className="skeleton" style={{width:'60%',height:16,marginBottom:8}}/>
+      <div className="skeleton" style={{width:'40%',height:13,marginBottom:8}}/>
+      <div className="skeleton" style={{width:'100%',height:40}}/>
+    </div>
+  ))}</div>;
+}
+
+// Skeleton สำหรับ table row
+function SkeletonRows({n=5,cols=6}){
+  return <>{Array.from({length:n}).map((_,i)=>(
+    <tr key={i}>{Array.from({length:cols}).map((__,j)=>(
+      <td key={j}><div className="skeleton" style={{height:14,width:j===0?80:j===cols-1?60:'70%'}}/></td>
+    ))}</tr>
+  ))}</>;
+}
+
+
 function Confirm({msg,onOk,onCancel}){
   return <div className="overlay">
     <div className="modal" style={{maxWidth:340}}>
@@ -475,7 +557,13 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
   }
 
   async function save(){
-    setLoading(true);
+    // Optimistic: ปิด modal ทันที ไม่รอ API
+    const optimisticData = isClaimed
+      ? {...caseData, newstatus:status}
+      : {...caseData, status, report: editReport?report:caseData.report, sales: (isAdmin&&newSales)?newSales:caseData.sales};
+    onUpdated(optimisticData); // ส่ง optimistic data ให้ parent update list ทันที
+    onClose();
+    // sync API ข้างหลัง (silent)
     try{
       if(isClaimed){
         await api('updateClaimed',{caseId,newstatus:status,Notes:'',sales:currentUser.name});
@@ -487,25 +575,20 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
           await api('adminChangeSales',{caseId,newSales});
         }
       }
-    }catch(e){}
-    setLoading(false);
-    onUpdated();onClose();
+    }catch(e){/* silent */}
   }
 
   async function saveReport(){
     if(!report.trim())return;
-    setLoading(true);
-    try{await api('updateCase',{caseid:caseId,report,changedBy:currentUser.name,detail:'แก้ไขรีพอร์ต'});}catch(e){}
-    setLoading(false);
     setEditReport(false);
-    onUpdated();
+    onUpdated({...caseData, report}); // optimistic
+    onClose();
+    try{await api('updateCase',{caseid:caseId,report,changedBy:currentUser.name,detail:'แก้ไขรีพอร์ต'});}catch(e){}
   }
 
   async function doDelete(){
-    setLoading(true);
+    onUpdated(); onClose(); // optimistic: ปิดทันที
     try{await api('sendToMarket',{caseId,sales:caseData.sales||currentUser.name});}catch(e){}
-    setLoading(false);
-    onUpdated();onClose();
   }
 
   if(showHistory) return <HistoryModal caseId={caseId} onClose={()=>setShowHistory(false)}/>;
@@ -618,8 +701,8 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
               🗑 ลบ
             </button>}
           </div>
-          <button style={{width:'100%',background:'#e53935',color:'#fff',border:'none',borderRadius:8,padding:'11px',fontSize:14,fontWeight:700,cursor:'pointer',opacity:loading?0.6:1,transition:'opacity .15s'}} onClick={save} disabled={loading}>
-            {loading?'กำลังบันทึก...':'ปิด'}
+          <button style={{width:'100%',background:'#e53935',color:'#fff',border:'none',borderRadius:8,padding:'11px',fontSize:14,fontWeight:700,cursor:'pointer',transition:'opacity .15s'}} onClick={save}>
+            บันทึก &amp; ปิด
           </button>
         </div>
       </div>
@@ -956,7 +1039,7 @@ function AdminCurrentCases({currentUser,users}){
             </th>
             <th>ชื่อลูกค้า</th><th>ติดต่อ</th><th>สถานะ</th><th>เซลส์</th><th>อัปเดตล่าสุด</th></tr></thead>
           <tbody>
-            {loading?<tr><td colSpan={6}><Loading/></td></tr>:
+            {loading?<SkeletonRows n={5} cols={6}/> :
             filtered.length===0?<tr><td colSpan={6} style={{textAlign:'center',padding:30,color:'var(--text2)'}}>ไม่พบเคส</td></tr>:
             filtered.map((c,i)=><tr key={i} className="clickable" onClick={()=>setSel(c)}>
               <td><span style={{color:'var(--blue)',fontWeight:700}}>{c.caseid}</span></td>
@@ -1042,7 +1125,7 @@ function AdminMarket({currentUser,users}){
     <div className="mk-body">
       {/* Cards Area */}
       <div className="mk-cards-area">
-        {loading?<Loading/>:filtered.length===0?
+        {loading?<SkeletonCards n={6}/>:filtered.length===0?
         <div style={{textAlign:'center',padding:60,color:'var(--text2)'}}>
           <div style={{fontSize:40,marginBottom:12}}>📭</div>
           <div>ไม่มีเคสในตลาด</div>
@@ -1157,7 +1240,7 @@ function AdminBookings({currentUser,users}){
         <table>
           <thead><tr><th>วันที่</th><th>รหัสเคส</th><th>ลูกค้า</th><th>เซลส์</th><th>รถ</th><th>รุ่น</th><th>ทะเบียน</th><th>สถานะ</th><th>หมายเหตุ</th></tr></thead>
           <tbody>
-            {loading?<tr><td colSpan={9}><Loading/></td></tr>:
+            {loading?<SkeletonRows n={5} cols={9}/> :
             bookings.length===0?<tr><td colSpan={9} style={{textAlign:'center',padding:30,color:'var(--text2)'}}>ไม่มีการจอง</td></tr>:
             bookings.map((b,i)=><tr key={i} className="clickable" onClick={()=>setSel(b)}>
               <td style={{fontSize:12,whiteSpace:'nowrap'}}>{String(b['วันที่']||'').split(' ')[0]}</td>
@@ -1476,7 +1559,7 @@ function SalesCurrentCases({currentUser,users}){
     </div>
 
     {/* Case list */}
-    {loading?<Loading/>:filtered.length===0?
+    {loading?<SkeletonCards n={4}/>:filtered.length===0?
       <div style={{textAlign:'center',padding:40,color:'var(--text2)'}}>
         <div style={{fontSize:32,marginBottom:8}}>🔍</div>
         <div>{q||filterStatus?'ไม่พบเคสที่ตรงกัน':'ยังไม่มีเคส'}</div>
@@ -1526,7 +1609,7 @@ function SalesClaimedCases({currentUser,users}){
 
   return <div className="page">
     <div className="page-hd"><div className="page-title">📥 เคสที่รับจากตลาด</div><button className="btn btn-ghost" onClick={load}>🔄</button></div>
-    {loading?<Loading/>:cases.length===0?<div style={{textAlign:'center',padding:40,color:'var(--text2)'}}>ยังไม่มีเคสที่รับจากตลาด</div>:
+    {loading?<SkeletonCards n={3}/>:cases.length===0?<div style={{textAlign:'center',padding:40,color:'var(--text2)'}}>ยังไม่มีเคสที่รับจากตลาด</div>:
     cases.map((c,i)=><div key={i} className="market-card" onClick={()=>setSel(c)} style={{cursor:'pointer'}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
         <span style={{color:'var(--blue)',fontWeight:700}}>{c.caseID}</span>
@@ -1610,7 +1693,7 @@ function AdminUsers({currentUser}){
         <table>
           <thead><tr><th>ID</th><th>Username</th><th>ชื่อ</th><th>Role</th><th>สถานะ</th></tr></thead>
           <tbody>
-            {loading?<tr><td colSpan={5}><Loading/></td></tr>:
+            {loading?<SkeletonRows n={5} cols={5}/> :
             users.map((u,i)=><tr key={i}>
               <td style={{fontSize:12,color:'var(--text2)'}}>{u.userId}</td>
               <td style={{fontWeight:600}}>{u.username}</td>
