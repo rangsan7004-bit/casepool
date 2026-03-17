@@ -1693,21 +1693,9 @@ function SalesDashboard({currentUser}){
   const [userInfo,setUserInfo]=useState(null);
 
   useEffect(()=>{
-    // ล้าง cache getUsers ก่อน เพื่อดึงข้อมูลใหม่ที่มี startdate
-    cacheClear(['getUsers']);
-    Promise.all([
-      api('getDashboard',{role:'Sales',sales:currentUser.name}),
-      api('getUsers')
-    ]).then(([dr,ur])=>{
-      if(dr.success) setData(dr.data);
-      if(ur.success){
-        const me=(ur.data||[]).find(u=>
-          u.name===currentUser.name ||
-          u.username===currentUser.username ||
-          u.userId===currentUser.userId
-        );
-        setUserInfo(me||null);
-      }
+    cacheClear(['getDashboard']);
+    api('getDashboard',{role:'Sales',sales:currentUser.name}).then(r=>{
+      if(r.success) setData(r.data);
       setLoading(false);
     });
   },[currentUser.name]);
@@ -1771,7 +1759,7 @@ function SalesDashboard({currentUser}){
     return `${dd}/${mm}/${yyyy}`;
   }
 
-  const startdate = userInfo?.startdate || currentUser.startdate;
+  const startdate = data?.startdate || currentUser.startdate;
   const daysWorked = calcDaysWorked(startdate);
   const yearsMonths = daysWorked!=null
     ? (()=>{
