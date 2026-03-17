@@ -1693,13 +1693,19 @@ function SalesDashboard({currentUser}){
   const [userInfo,setUserInfo]=useState(null);
 
   useEffect(()=>{
+    // ล้าง cache getUsers ก่อน เพื่อดึงข้อมูลใหม่ที่มี startdate
+    cacheClear(['getUsers']);
     Promise.all([
       api('getDashboard',{role:'Sales',sales:currentUser.name}),
       api('getUsers')
     ]).then(([dr,ur])=>{
       if(dr.success) setData(dr.data);
       if(ur.success){
-        const me=(ur.data||[]).find(u=>u.name===currentUser.name||u.username===currentUser.username);
+        const me=(ur.data||[]).find(u=>
+          u.name===currentUser.name ||
+          u.username===currentUser.username ||
+          u.userId===currentUser.userId
+        );
         setUserInfo(me||null);
       }
       setLoading(false);
@@ -2028,18 +2034,48 @@ function App(){
     try{const s=sessionStorage.getItem('casepool_user');return s?JSON.parse(s):null;}catch{return null;}
   });
 
+  const [showLogoutConfirm,setShowLogoutConfirm]=useState(false);
+
   function handleLogin(u){
     sessionStorage.setItem('casepool_user',JSON.stringify(u));
     setUser(u);
   }
   function handleLogout(){
     sessionStorage.removeItem('casepool_user');
+    // ล้าง cache ทั้งหมดตอน logout
+    Object.keys(_cache).forEach(k=>delete _cache[k]);
     setUser(null);
+    setShowLogoutConfirm(false);
   }
 
   if(!user) return <LoginPage onLogin={handleLogin}/>;
-  if(user.role==='Admin') return <AdminApp currentUser={user} onLogout={handleLogout}/>;
-  return <SalesApp currentUser={user} onLogout={handleLogout}/>;
+
+  const logoutConfirmModal = showLogoutConfirm && (
+    <div className="overlay" style={{zIndex:9999}}>
+      <div className="modal" style={{maxWidth:320}}>
+        <div className="modal-bd" style={{textAlign:'center',padding:'32px 24px'}}>
+          <div style={{fontSize:40,marginBottom:12}}>👋</div>
+          <div style={{fontWeight:700,fontSize:16,marginBottom:8}}>ออกจากระบบ?</div>
+          <div style={{fontSize:13,color:'var(--text2)',marginBottom:24}}>
+            {user.name} · {user.role}
+          </div>
+          <div style={{display:'flex',gap:10}}>
+            <button className="btn btn-ghost" style={{flex:1,padding:'10px'}}
+              onClick={()=>setShowLogoutConfirm(false)}>
+              ยกเลิก
+            </button>
+            <button className="btn btn-danger" style={{flex:1,padding:'10px'}}
+              onClick={handleLogout}>
+              ออกจากระบบ
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if(user.role==='Admin') return <>{logoutConfirmModal}<AdminApp currentUser={user} onLogout={()=>setShowLogoutConfirm(true)}/></>;
+  return <>{logoutConfirmModal}<SalesApp currentUser={user} onLogout={()=>setShowLogoutConfirm(true)}/></>;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
