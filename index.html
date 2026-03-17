@@ -18,6 +18,13 @@
   --yellow:#d29922;--purple:#bc8cff;--orange:#ffa657;--cyan:#39d353;
   --radius:8px;--shadow:0 8px 24px rgba(0,0,0,.4);
 }
+body.light{
+  --bg:#f0f2f5;--bg2:#ffffff;--bg3:#f6f8fa;--bg4:#d0d7de;
+  --border:#d0d7de;--text:#1f2328;--text2:#656d76;--text3:#848d97;
+  --blue:#0969da;--blue2:#0550ae;--green:#1a7f37;--red:#cf222e;
+  --yellow:#9a6700;--purple:#8250df;--orange:#bc4c00;
+  --shadow:0 8px 24px rgba(0,0,0,.12);
+}
 body{background:var(--bg);color:var(--text);min-height:100vh;}
 ::-webkit-scrollbar{width:6px;height:6px;}
 ::-webkit-scrollbar-track{background:var(--bg2);}
@@ -928,7 +935,7 @@ function SalesMarket({currentUser}){
       api('getClaimedCases',{sales:currentUser.name}),
       api('getDashboard',{role:'Admin'})
     ]).then(([mr,cr,dr])=>{
-      if(mr.success)setCases(mr.data||[]);
+      if(mr.success)setCases((mr.data||[]).filter(c=>c.old_sales!==currentUser.name));
       if(cr.success)setClaimedCases(cr.data||[]);
       if(dr.success){setLeaderboard(dr.data?.sales||[]);}
       setLoading(false);
@@ -1004,7 +1011,7 @@ function SalesMarket({currentUser}){
               </div>
               <div className="mkc-name">{c.name}</div>
               <div className="mkc-badges">
-                <span className="badge s-wait" style={{fontSize:11}}>สถานะเดิม: {c.status||'-'}</span>
+                <StatusBadge status={c.status}/>
                 <span className="badge" style={{background:'rgba(255,166,87,.1)',color:'var(--orange)',border:'1px solid rgba(255,166,87,.3)',fontSize:11}}>เคสจาก {c.old_sales||'-'}</span>
               </div>
               <div className="mkc-contact">
@@ -1083,9 +1090,9 @@ function SalesCurrentCases({currentUser,users}){
           <span style={{color:'var(--blue)',fontWeight:700}}>{c.caseid}</span>
           <StatusBadge status={c.status}/>
         </div>
-        <div style={{fontWeight:500,marginBottom:4}}>{c.customername}</div>
-        <div style={{fontSize:12,color:'var(--text2)'}}>{c.contact||'-'} · อัปเดต: {String(c.updatedat||'').split(' ')[0]}</div>
-        {c.report&&<div style={{fontSize:12,color:'var(--text2)',marginTop:6,lineHeight:1.5}}>{String(c.report).slice(0,100)}{c.report.length>100?'...':''}</div>}
+        <div style={{fontWeight:600,marginBottom:4,fontSize:15}}>{c.customername}</div>
+        <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>📞 {c.contact||'-'} · 🕐 {String(c.updatedat||c.createdat||'').split(' ')[0]||'-'}</div>
+        {c.report&&<div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'6px 10px',borderRadius:6,marginTop:6,lineHeight:1.5}}>{String(c.report).slice(0,100)}{String(c.report).length>100?'...':''}</div>}
       </div>)}
     </div>}
     {sel&&<CaseModal caseData={sel} users={users} currentUser={currentUser} onClose={()=>setSel(null)} onUpdated={load}/>}
@@ -1313,6 +1320,7 @@ function AdminApp({currentUser,onLogout}){
           <button className="btn btn-ghost" style={{flex:1,fontSize:12,position:'relative'}} onClick={()=>setShowNotif(!showNotif)}>
             <Ico.bell/>{notifCount>0&&<span style={{position:'absolute',top:2,right:4,background:'var(--red)',width:16,height:16,borderRadius:'50%',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}}>{notifCount}</span>}
           </button>
+          <button className="btn btn-ghost" style={{flex:1,fontSize:12}} onClick={()=>document.body.classList.toggle('light')} title="เปลี่ยนธีม">🌓</button>
           <button className="btn btn-ghost" style={{flex:1,fontSize:12}} onClick={onLogout}><Ico.logout/></button>
         </div>
       </div>
@@ -1354,6 +1362,7 @@ function SalesApp({currentUser,onLogout}){
       <div style={{fontWeight:800,color:'var(--blue)'}}>🚗 CasePool</div>
       <div style={{display:'flex',alignItems:'center',gap:12}}>
         <div style={{fontSize:14,color:'var(--text2)'}}>{currentUser.name}</div>
+        <button className="btn btn-ghost" style={{padding:'4px 8px'}} onClick={()=>{document.body.classList.toggle('light');}} title="เปลี่ยนธีม">🌓</button>
         <button className="btn btn-ghost" style={{padding:'4px 8px',position:'relative'}} onClick={()=>setShowNotif(!showNotif)}>
           <Ico.bell/>
           {notifCount>0&&<span style={{position:'absolute',top:0,right:0,background:'var(--red)',width:16,height:16,borderRadius:'50%',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}}>{notifCount}</span>}
