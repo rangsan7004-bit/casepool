@@ -177,7 +177,12 @@ function getStatusClass(s){
   return m[s]||'s-wait';
 }
 
-// แก้ปัญหาเบอร์โทรหาย 0 ข้างหน้า (Google Sheets เก็บเป็น number)
+function displayContact(contact){
+  if(!contact&&contact!==0) return '-';
+  const s=String(contact).trim();
+  if(s.startsWith('data:image')||s.startsWith('https://drive.google.com')) return '📷 QR Code';
+  return formatContact(s)||'-';
+}
 function formatContact(contact){
   if(!contact&&contact!==0) return '';
   const s=String(contact).trim();
@@ -956,7 +961,7 @@ function AdminCurrentCases({currentUser,users}){
             filtered.map((c,i)=><tr key={i} className="clickable" onClick={()=>setSel(c)}>
               <td><span style={{color:'var(--blue)',fontWeight:700}}>{c.caseid}</span></td>
               <td style={{fontWeight:500}}>{c.customername}</td>
-              <td style={{fontSize:13,color:'var(--text2)'}}>{formatContact(c.contact)||'-'}</td>
+              <td style={{fontSize:13,color:'var(--text2)'}}>{displayContact(c.contact)}</td>
               <td><StatusBadge status={c.status}/></td>
               <td><span style={{color:'var(--purple)'}}>{c.sales}</span></td>
               <td style={{fontSize:12,color:'var(--text3)'}}>{String(c.updatedat||'').split(' ')[0]}</td>
@@ -1381,7 +1386,7 @@ function SalesCurrentCases({currentUser,users}){
           <StatusBadge status={c.status}/>
         </div>
         <div style={{fontWeight:600,marginBottom:4,fontSize:15}}>{c.customername}</div>
-        <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>📞 {formatContact(c.contact)||'-'} · 🕐 {String(c.updatedat||c.createdat||'').split(' ')[0]||'-'}</div>
+        <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>📞 {displayContact(c.contact)} · 🕐 {String(c.updatedat||c.createdat||'').split(' ')[0]||'-'}</div>
         {c.report&&<div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'6px 10px',borderRadius:6,marginTop:6,lineHeight:1.5}}>{String(c.report).slice(0,100)}{String(c.report).length>100?'...':''}</div>}
         <div style={{marginTop:10,display:'flex',gap:6}}>
           <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--yellow)'}} onClick={e=>{e.stopPropagation();if(window.confirm('ส่งเคส '+c.caseid+' ขึ้นตลาด?'))api('sendToMarket',{caseId:c.caseid,sales:currentUser.name}).then(()=>load());}}>⬆ ส่งตลาด</button>
