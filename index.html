@@ -177,6 +177,18 @@ function getStatusClass(s){
   return m[s]||'s-wait';
 }
 
+// แก้ปัญหาเบอร์โทรหาย 0 ข้างหน้า (Google Sheets เก็บเป็น number)
+function formatContact(contact){
+  if(!contact&&contact!==0) return '';
+  const s=String(contact).trim();
+  if(s.startsWith('http')||s.startsWith('data:')) return s;
+  // เบอร์ไทย 10 หลัก ถ้า Sheets ตัด 0 จะเหลือ 9 หลัก
+  if(/^\d{9}$/.test(s)) return '0'+s;
+  // เผื่อ 8 หลัก (เบอร์บ้าน)
+  if(/^\d{8}$/.test(s)) return '0'+s;
+  return s;
+}
+
 // ============================================================
 // API
 // ============================================================
@@ -417,101 +429,191 @@ function HistoryModal({caseId,onClose}){
 }
 
 // ============================================================
-// CASE MODAL (Admin + Sales shared)
+// CASE MODAL — redesigned (Admin + Sales shared)
 // ============================================================
 function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
   const [status,setStatus]=useState(caseData.status||caseData.newstatus||'รอข้อมูล');
   const [report,setReport]=useState(caseData.report||'');
   const [editReport,setEditReport]=useState(false);
-  const [note,setNote]=useState(caseData.Notes||'');
   const [loading,setLoading]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
-  const [newSales,setNewSales]=useState(caseData.sales||'');
+  const [newSales,setNewSales]=useState(caseData.sales||caseData.sale||'');
+  const [notes,setNotes]=useState([]);
+  const [addingNote,setAddingNote]=useState(false);
+  const [newNote,setNewNote]=useState('');
+  const [confirmDel,setConfirmDel]=useState(false);
   const isAdmin=currentUser.role==='Admin';
   const isClaimed=!!caseData.fromsales;
   const caseId=caseData.caseid||caseData.caseID;
+  const contactRaw=caseData.contact||'';
+  const contactVal=formatContact(contactRaw);
+  const isQR=contactRaw.startsWith('http')||contactRaw.startsWith('data:image');
+
+  // โหลด notes จาก localStorage (เก็บต่อเคส)
+  useEffect(()=>{
+    try{const d=JSON.parse(localStorage.getItem('cnotes_'+caseId)||'[]');setNotes(Array.isArray(d)?d:[]);}
+    catch(e){setNotes([]);}
+  },[caseId]);
+
+  function saveNote(){
+    if(!newNote.trim())return;
+    const upd=[...notes,{text:newNote.trim(),date:new Date().toLocaleString('th-TH'),by:currentUser.name}];
+    setNotes(upd);
+    try{localStorage.setItem('cnotes_'+caseId,JSON.stringify(upd));}catch(e){}
+    setNewNote('');setAddingNote(false);
+  }
+
+  function deleteNote(i){
+    const upd=notes.filter((_,idx)=>idx!==i);
+    setNotes(upd);
+    try{localStorage.setItem('cnotes_'+caseId,JSON.stringify(upd));}catch(e){}
+  }
 
   async function save(){
     setLoading(true);
-    if(isClaimed){
-      await api('updateClaimed',{caseId,newstatus:status,Notes:note,sales:currentUser.name});
-    } else {
-      await api('updateCase',{caseid:caseId,status,report:editReport?report:undefined,changedBy:currentUser.name,detail:`เปลี่ยนสถานะเป็น ${status}`});
-    }
+    try{
+      if(isClaimed){
+        await api('updateClaimed',{caseId,newstatus:status,Notes:'',sales:currentUser.name});
+      } else {
+        const upd={caseid:caseId,status,changedBy:currentUser.name,detail:'เปลี่ยนสถานะเป็น '+status};
+        if(editReport) upd.report=report;
+        await api('updateCase',upd);
+        if(isAdmin&&newSales&&newSales!==caseData.sales){
+          await api('adminChangeSales',{caseId,newSales});
+        }
+      }
+    }catch(e){}
     setLoading(false);
     onUpdated();onClose();
   }
 
-  async function changeSales(){
-    if(!newSales)return;
+  async function saveReport(){
+    if(!report.trim())return;
     setLoading(true);
-    await api('adminChangeSales',{caseId,newSales});
+    try{await api('updateCase',{caseid:caseId,report,changedBy:currentUser.name,detail:'แก้ไขรีพอร์ต'});}catch(e){}
+    setLoading(false);
+    setEditReport(false);
+    onUpdated();
+  }
+
+  async function doDelete(){
+    setLoading(true);
+    try{await api('sendToMarket',{caseId,sales:caseData.sales||currentUser.name});}catch(e){}
     setLoading(false);
     onUpdated();onClose();
   }
 
-  async function sendToMarket(){
-    setLoading(true);
-    await api('sendToMarket',{caseId,sales:caseData.sales||currentUser.name});
-    setLoading(false);
-    onUpdated();onClose();
-  }
+  if(showHistory) return <HistoryModal caseId={caseId} onClose={()=>setShowHistory(false)}/>;
 
   return <>
-    <Modal title={`เคส ${caseId}`} onClose={onClose} footer={<>
-      {showHistory&&<button className="btn btn-ghost" onClick={()=>setShowHistory(false)} style={{marginRight:'auto'}}>← กลับ</button>}
-      {!showHistory&&<>
-        <button className="btn btn-ghost" onClick={()=>setShowHistory(true)} style={{gap:6,display:'flex',alignItems:'center'}}><Ico.history/> ประวัติ</button>
-        {!isClaimed&&<button className="btn btn-ghost" onClick={sendToMarket} style={{color:'var(--yellow)'}}>⬆ ส่งตลาด</button>}
-        <button className="btn btn-primary" onClick={save} disabled={loading}>{loading?'กำลังบันทึก...':'💾 บันทึก'}</button>
-      </>}
-    </>}>
-      {showHistory?<HistoryModal caseId={caseId} onClose={()=>setShowHistory(false)}/>:<>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
-          <div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>รหัสเคส</div><div style={{fontWeight:700,color:'var(--blue)'}}>{caseId}</div></div>
-          <div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>ชื่อลูกค้า</div><div style={{fontWeight:600}}>{caseData.customername||caseData.name||'-'}</div></div>
-          <div style={{gridColumn:'1/-1'}}><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>ติดต่อ / QR</div>
-            {(caseData.contact||'').startsWith('http')||(caseData.contact||'').startsWith('data:image')?
-              <div>
-                {isClaimed?<img src={caseData.contact} alt="QR" style={{maxWidth:'100%',maxHeight:180,borderRadius:8,border:'1px solid var(--border)'}}/>:
-                <div style={{background:'var(--bg3)',padding:8,borderRadius:8,textAlign:'center',color:'var(--text2)',fontSize:12}}>🔒 รับเคสก่อนเพื่อดู QR Code</div>}
-              </div>:
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <span style={{fontWeight:600,color:'var(--green)',filter:isClaimed?'blur(0)':'blur(4px)'}}>{caseData.contact||'-'}</span>
-                {isClaimed&&<button className="btn btn-ghost" style={{padding:'2px 6px',fontSize:12}} onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(caseData.contact);}}><Ico.copy/></button>}
-              </div>
+    {confirmDel&&<Confirm msg={'ส่งเคส '+caseId+' ขึ้นตลาด / ลบออกจากรายการ?'} onOk={()=>{setConfirmDel(false);doDelete();}} onCancel={()=>setConfirmDel(false)}/>}
+    <div className="overlay" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div className="modal" style={{maxWidth:480,borderRadius:14}}>
+
+        {/* Header */}
+        <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:10}}>
+          <div style={{width:4,height:22,background:'var(--blue)',borderRadius:2,flexShrink:0}}/>
+          <span style={{fontWeight:700,fontSize:15}}>ข้อมูลลูกค้า</span>
+          <button className="btn btn-ghost" style={{padding:'4px 8px',marginLeft:'auto'}} onClick={onClose}><Ico.x/></button>
+        </div>
+
+        {/* Body */}
+        <div style={{padding:'16px 20px',overflowY:'auto',maxHeight:'calc(90vh - 190px)'}}>
+
+          {/* Static info */}
+          <div style={{marginBottom:14,display:'grid',gap:9}}>
+            <div style={{fontSize:14}}><span style={{color:'var(--text2)'}}>รหัสเคส: </span><span style={{fontWeight:700,color:'var(--blue)'}}>{caseId}</span></div>
+            <div style={{fontSize:14}}><span style={{color:'var(--text2)'}}>ชื่อลูกค้า: </span><span style={{fontWeight:600}}>{caseData.customername||caseData.name||'-'}</span></div>
+            <div style={{fontSize:14,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span style={{color:'var(--text2)'}}>ติดต่อ: </span>
+              {isQR
+                ? <span style={{fontSize:13,color:'var(--text2)'}}>QR Code 📷</span>
+                : <>
+                    <span style={{fontWeight:600}}>{contactVal||'-'}</span>
+                    {contactVal&&<button className="btn btn-primary" style={{padding:'3px 14px',fontSize:12,borderRadius:20}} onClick={()=>{try{navigator.clipboard.writeText(contactVal);}catch(e){}}}>Copy</button>}
+                  </>
+              }
+            </div>
+          </div>
+
+          {/* Status */}
+          <div className="form-group">
+            <label>สถานะ:</label>
+            <select value={status} onChange={e=>setStatus(e.target.value)}>
+              {STATUSES.map(s=><option key={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {/* Sales */}
+          <div className="form-group">
+            <label>เซลส์:</label>
+            {isAdmin&&!isClaimed
+              ? <select value={newSales} onChange={e=>setNewSales(e.target.value)}>
+                  <option value="">-- เลือกเซลส์ --</option>
+                  {(users||[]).filter(u=>u.role==='Sales').map(u=><option key={u.userId} value={u.name}>{u.name}</option>)}
+                </select>
+              : <div style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 12px',fontSize:14}}>{caseData.sales||caseData.sale||currentUser.name}</div>
             }
           </div>
-          <div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>เซลส์</div><div style={{fontWeight:600,color:'var(--purple)'}}>{caseData.sales||caseData.sale||'-'}</div></div>
-          {isClaimed&&<div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>รับมาจาก</div><div style={{fontWeight:600,color:'var(--orange)'}}>{caseData.fromsales||'-'}</div></div>}
-        </div>
-        <div className="form-group">
-          <label>สถานะ</label>
-          <select value={status} onChange={e=>setStatus(e.target.value)}>
-            {STATUSES.map(s=><option key={s}>{s}</option>)}
-          </select>
-        </div>
-        <div className="form-group">
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-            <label style={{margin:0}}>รีพอร์ต</label>
-            {!isClaimed&&<button className="btn btn-ghost" style={{padding:'2px 8px',fontSize:12}} onClick={()=>setEditReport(!editReport)}>{editReport?'ยกเลิก':'✏️ แก้ไข'}</button>}
+
+          {/* Report */}
+          <div className="form-group">
+            <label>รีพอร์ต:</label>
+            {editReport
+              ? <textarea rows={4} value={report} onChange={e=>setReport(e.target.value)} style={{color:'var(--text)'}}/>
+              : <div style={{background:'var(--bg3)',padding:'8px 12px',borderRadius:6,fontSize:13,minHeight:56,whiteSpace:'pre-wrap',color:'var(--text2)',lineHeight:1.6}}>{report||'ไม่มีรีพอร์ต'}</div>
+            }
           </div>
-          {editReport?<textarea rows={4} value={report} onChange={e=>setReport(e.target.value)} style={{color:'var(--text)'}}/>:
-          <div style={{background:'var(--bg3)',padding:'8px 12px',borderRadius:6,fontSize:13,minHeight:60,whiteSpace:'pre-wrap',color:editReport?'var(--text)':'var(--text2)'}}>{report||'ไม่มีรีพอร์ต'}</div>}
-        </div>
-        {isClaimed&&<div className="form-group"><label>โน้ต</label><textarea rows={2} value={note} onChange={e=>setNote(e.target.value)}/></div>}
-        {isAdmin&&!isClaimed&&<div className="form-group">
-          <label>เปลี่ยนเซลส์</label>
-          <div style={{display:'flex',gap:8}}>
-            <select value={newSales} onChange={e=>setNewSales(e.target.value)}>
-              <option value="">-- เลือกเซลส์ --</option>
-              {users.filter(u=>u.role==='Sales').map(u=><option key={u.userId} value={u.name}>{u.name}</option>)}
-            </select>
-            <button className="btn btn-ghost" onClick={changeSales} disabled={!newSales}>เปลี่ยน</button>
+
+          {/* Notes */}
+          <div>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+              <span style={{fontSize:14,fontWeight:600}}>📝 Notes</span>
+              <button className="btn btn-ghost" style={{fontSize:12,padding:'3px 12px',borderRadius:20,border:'1px dashed var(--border)'}} onClick={()=>setAddingNote(!addingNote)}>
+                + เพิ่ม Note
+              </button>
+            </div>
+            {addingNote&&<div style={{marginBottom:10}}>
+              <textarea rows={2} value={newNote} onChange={e=>setNewNote(e.target.value)} placeholder="เขียน note ที่นี่..." style={{marginBottom:6}}/>
+              <div style={{display:'flex',gap:6}}>
+                <button className="btn btn-primary" style={{fontSize:12,padding:'5px 14px'}} onClick={saveNote}>บันทึก</button>
+                <button className="btn btn-ghost" style={{fontSize:12,padding:'5px 14px'}} onClick={()=>{setAddingNote(false);setNewNote('');}}>ยกเลิก</button>
+              </div>
+            </div>}
+            {notes.length===0&&!addingNote
+              ? <div style={{textAlign:'center',color:'var(--text3)',fontSize:12,padding:'8px 0'}}>ยังไม่มี notes</div>
+              : <div style={{maxHeight:150,overflowY:'auto'}}>
+                  {notes.map((n,i)=><div key={i} style={{background:'var(--bg3)',borderRadius:6,padding:'8px 10px',marginBottom:6,fontSize:13,display:'flex',gap:8,alignItems:'flex-start'}}>
+                    <div style={{flex:1}}>
+                      <div style={{color:'var(--text)'}}>{n.text}</div>
+                      <div style={{fontSize:11,color:'var(--text3)',marginTop:3}}>โดย {n.by} · {n.date}</div>
+                    </div>
+                    <button onClick={()=>deleteNote(i)} style={{background:'none',border:'none',color:'var(--text3)',cursor:'pointer',fontSize:14,padding:'0 2px',flexShrink:0}}>✕</button>
+                  </div>)}
+                </div>
+            }
           </div>
-        </div>}
-      </>}
-    </Modal>
+        </div>
+
+        {/* Footer */}
+        <div style={{padding:'10px 16px',borderTop:'1px solid var(--border)'}}>
+          <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+            {!isClaimed&&<button className="btn btn-primary" style={{flex:1,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:5}} onClick={editReport?saveReport:()=>setEditReport(true)}>
+              ✏️ {editReport?'บันทึกรีพอร์ต':'แก้ไขรีพอร์ต'}
+            </button>}
+            <button className="btn btn-ghost" style={{flex:1,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:5}} onClick={()=>setShowHistory(true)}>
+              <Ico.history/> ประวัติ
+            </button>
+            {!isClaimed&&<button className="btn btn-ghost" style={{flex:1,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:5}} onClick={()=>setConfirmDel(true)}>
+              🗑 ลบ
+            </button>}
+          </div>
+          <button style={{width:'100%',background:'#e53935',color:'#fff',border:'none',borderRadius:8,padding:'11px',fontSize:14,fontWeight:700,cursor:'pointer',opacity:loading?0.6:1,transition:'opacity .15s'}} onClick={save} disabled={loading}>
+            {loading?'กำลังบันทึก...':'ปิด'}
+          </button>
+        </div>
+      </div>
+    </div>
   </>;
 }
 
@@ -791,7 +893,7 @@ function AdminCurrentCases({currentUser,users}){
             filtered.map((c,i)=><tr key={i} className="clickable" onClick={()=>setSel(c)}>
               <td><span style={{color:'var(--blue)',fontWeight:700}}>{c.caseid}</span></td>
               <td style={{fontWeight:500}}>{c.customername}</td>
-              <td style={{fontSize:13,color:'var(--text2)'}}>{c.contact||'-'}</td>
+              <td style={{fontSize:13,color:'var(--text2)'}}>{formatContact(c.contact)||'-'}</td>
               <td><StatusBadge status={c.status}/></td>
               <td><span style={{color:'var(--purple)'}}>{c.sales}</span></td>
               <td style={{fontSize:12,color:'var(--text3)'}}>{String(c.updatedat||'').split(' ')[0]}</td>
@@ -1216,7 +1318,7 @@ function SalesCurrentCases({currentUser,users}){
           <StatusBadge status={c.status}/>
         </div>
         <div style={{fontWeight:600,marginBottom:4,fontSize:15}}>{c.customername}</div>
-        <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>📞 {c.contact||'-'} · 🕐 {String(c.updatedat||c.createdat||'').split(' ')[0]||'-'}</div>
+        <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>📞 {formatContact(c.contact)||'-'} · 🕐 {String(c.updatedat||c.createdat||'').split(' ')[0]||'-'}</div>
         {c.report&&<div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'6px 10px',borderRadius:6,marginTop:6,lineHeight:1.5}}>{String(c.report).slice(0,100)}{String(c.report).length>100?'...':''}</div>}
         <div style={{marginTop:10,display:'flex',gap:6}}>
           <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--yellow)'}} onClick={e=>{e.stopPropagation();if(window.confirm('ส่งเคส '+c.caseid+' ขึ้นตลาด?'))api('sendToMarket',{caseId:c.caseid,sales:currentUser.name}).then(()=>load());}}>⬆ ส่งตลาด</button>
@@ -1258,8 +1360,8 @@ function SalesClaimedCases({currentUser,users}){
         {' · '}รับเมื่อ: {String(c.AssignedAt||'').split(' ')[0]}
       </div>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
-        <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--green)'}} onClick={e=>{e.stopPropagation();navigator.clipboard&&navigator.clipboard.writeText(c.contact||'');}}>
-          <Ico.copy/> {c.contact||'ไม่มีเบอร์'}
+        <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--green)'}} onClick={e=>{e.stopPropagation();navigator.clipboard&&navigator.clipboard.writeText(formatContact(c.contact)||'');}}>
+          <Ico.copy/> {formatContact(c.contact)||'ไม่มีเบอร์'}
         </button>
         <button className="btn btn-danger" style={{fontSize:12,padding:'4px 10px',marginLeft:'auto'}} onClick={e=>{e.stopPropagation();setConfirm(c.caseID);}}>↩ คืนเคส</button>
       </div>
