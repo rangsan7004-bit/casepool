@@ -1358,41 +1358,151 @@ function SalesCurrentCases({currentUser,users}){
   const [cases,setCases]=useState([]);
   const [loading,setLoading]=useState(true);
   const [sel,setSel]=useState(null);
+  const [q,setQ]=useState('');
+  const [sortDir,setSortDir]=useState('desc'); // desc=ใหม่ก่อน, asc=เก่าก่อน
+  const [filterStatus,setFilterStatus]=useState('');
+  const [showClosed,setShowClosed]=useState(false);
 
   const CLOSED_STATUSES=['ปิดเคส','รีเจค','ได้รถจากที่อื่น','โยนเคส','ปล่อยแล้ว'];
+
   const load=useCallback(()=>{
     setLoading(true);
-    // ดึงเคสทั้งหมดของตัวเอง แล้ว filter เฉพาะที่ยังไม่ปิด (active)
     api('getCases',{sales:currentUser.name,all:'true'}).then(r=>{
-      if(r.success){
-        const active=(r.data||[]).filter(c=>!CLOSED_STATUSES.includes(c.status));
-        setCases(active);
-      }
+      if(r.success) setCases(r.data||[]);
       setLoading(false);
     });
   },[currentUser.name]);
   useEffect(()=>{load();},[load]);
 
+  // filter + sort
+  const filtered = cases
+    .filter(c=>{
+      if(!showClosed && CLOSED_STATUSES.includes(c.status)) return false;
+      if(filterStatus && c.status!==filterStatus) return false;
+      if(q){
+        const lq=q.toLowerCase();
+        return String(c.caseid).includes(lq)||
+               String(c.customername||'').toLowerCase().includes(lq)||
+               String(c.contact||'').toLowerCase().includes(lq)||
+               String(c.report||'').toLowerCase().includes(lq);
+      }
+      return true;
+    })
+    .sort((a,b)=>{
+      const av=String(a.caseid||''), bv=String(b.caseid||'');
+      return sortDir==='desc'?bv.localeCompare(av):av.localeCompare(bv);
+    });
+
+  const activeCount=cases.filter(c=>!CLOSED_STATUSES.includes(c.status)).length;
+  const closedCount=cases.filter(c=>CLOSED_STATUSES.includes(c.status)).length;
+
+  function formatDate(d){
+    const s=String(d||'');
+    // ISO format → แปลงเป็น dd/mm/yy HH:mm
+    if(s.includes('T')){
+      const dt=new Date(s);
+      if(!isNaN(dt)){
+        const dd=String(dt.getDate()).padStart(2,'0');
+        const mm=String(dt.getMonth()+1).padStart(2,'0');
+        const yy=String(dt.getFullYear()).slice(-2);
+        const hh=String(dt.getHours()).padStart(2,'0');
+        const min=String(dt.getMinutes()).padStart(2,'0');
+        return `${dd}/${mm}/${yy} ${hh}:${min}`;
+      }
+    }
+    // dd/MM/yyyy HH:mm:ss → เอาแค่ dd/mm/yy HH:mm
+    const m=s.match(/(\d+)\/(\d+)\/(\d+)\s+(\d+):(\d+)/);
+    if(m) return `${m[1]}/${m[2]}/${String(m[3]).slice(-2)} ${m[4]}:${m[5]}`;
+    return s.split(' ')[0]||'-';
+  }
+
   return <div className="page">
-    <div className="page-hd">
-      <div><div className="page-title">📋 เคสของฉัน</div><div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>{cases.length} เคส ที่กำลังดูแลอยู่</div></div>
-      <button className="btn btn-ghost" onClick={load}>🔄</button>
+    {/* Header */}
+    <div className="page-hd" style={{marginBottom:12}}>
+      <div>
+        <div className="page-title">📋 เคสของฉัน</div>
+        <div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>
+          กำลังดูแล <span style={{color:'var(--blue)',fontWeight:700}}>{activeCount}</span> เคส
+          {closedCount>0&&<span style={{marginLeft:8,color:'var(--text3)'}}>· ปิดแล้ว {closedCount}</span>}
+        </div>
+      </div>
+      <button className="btn btn-ghost" onClick={load} style={{padding:'6px 10px'}}>🔄</button>
     </div>
-    {loading?<Loading/>:<div>
-      {cases.length===0?<div style={{textAlign:'center',padding:40,color:'var(--text2)'}}>ยังไม่มีเคส</div>:
-      cases.map((c,i)=><div key={i} className="market-card" onClick={()=>setSel(c)} style={{cursor:'pointer'}}>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
-          <span style={{color:'var(--blue)',fontWeight:700}}>{c.caseid}</span>
+
+    {/* Search bar */}
+    <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+      <div style={{position:'relative',flex:1,minWidth:180}}>
+        <span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'var(--text3)',pointerEvents:'none',fontSize:14}}>🔍</span>
+        <input
+          value={q} onChange={e=>setQ(e.target.value)}
+          placeholder="ค้นหาชื่อ เบอร์ รหัสเคส รีพอร์ต..."
+          style={{paddingLeft:32,fontSize:13}}
+        />
+      </div>
+      {q&&<button className="btn btn-ghost" style={{fontSize:12,padding:'6px 10px'}} onClick={()=>setQ('')}>✕ ล้าง</button>}
+    </div>
+
+    {/* Filter row */}
+    <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
+      {/* Sort toggle */}
+      <button
+        className="btn btn-ghost"
+        style={{fontSize:12,padding:'6px 12px',display:'flex',alignItems:'center',gap:4,border:'1px solid var(--border)',borderRadius:20}}
+        onClick={()=>setSortDir(d=>d==='desc'?'asc':'desc')}
+      >
+        {sortDir==='desc'?<>🆕 ใหม่สุดก่อน ↓</>:<>🕰 เก่าสุดก่อน ↑</>}
+      </button>
+
+      {/* Status filter */}
+      <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
+        style={{fontSize:12,padding:'6px 10px',borderRadius:20,minWidth:120,flex:1,maxWidth:180}}>
+        <option value="">ทุกสถานะ</option>
+        {STATUSES.map(s=><option key={s}>{s}</option>)}
+      </select>
+
+      {/* Show closed toggle */}
+      <button
+        className="btn btn-ghost"
+        style={{fontSize:12,padding:'6px 12px',borderRadius:20,
+          border:`1px solid ${showClosed?'var(--red)':'var(--border)'}`,
+          color:showClosed?'var(--red)':'var(--text2)'}}
+        onClick={()=>setShowClosed(v=>!v)}
+      >
+        {showClosed?'🔴 ซ่อนปิดแล้ว':'⚫ แสดงเคสที่ปิด'}
+      </button>
+
+      {/* Result count */}
+      <span style={{fontSize:12,color:'var(--text3)',marginLeft:'auto'}}>แสดง {filtered.length} รายการ</span>
+    </div>
+
+    {/* Case list */}
+    {loading?<Loading/>:filtered.length===0?
+      <div style={{textAlign:'center',padding:40,color:'var(--text2)'}}>
+        <div style={{fontSize:32,marginBottom:8}}>🔍</div>
+        <div>{q||filterStatus?'ไม่พบเคสที่ตรงกัน':'ยังไม่มีเคส'}</div>
+      </div>:
+      filtered.map((c,i)=><div key={i} className="market-card" onClick={()=>setSel(c)} style={{cursor:'pointer',opacity:CLOSED_STATUSES.includes(c.status)?0.6:1}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}}>
+          <span style={{color:'var(--blue)',fontWeight:700,fontSize:15}}>{c.caseid}</span>
           <StatusBadge status={c.status}/>
         </div>
         <div style={{fontWeight:600,marginBottom:4,fontSize:15}}>{c.customername}</div>
-        <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>📞 {displayContact(c.contact)} · 🕐 {String(c.updatedat||c.createdat||'').split(' ')[0]||'-'}</div>
-        {c.report&&<div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'6px 10px',borderRadius:6,marginTop:6,lineHeight:1.5}}>{String(c.report).slice(0,100)}{String(c.report).length>100?'...':''}</div>}
-        <div style={{marginTop:10,display:'flex',gap:6}}>
-          <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--yellow)'}} onClick={e=>{e.stopPropagation();if(window.confirm('ส่งเคส '+c.caseid+' ขึ้นตลาด?'))api('sendToMarket',{caseId:c.caseid,sales:currentUser.name}).then(()=>load());}}>⬆ ส่งตลาด</button>
+        <div style={{fontSize:12,color:'var(--text2)',marginBottom:6,display:'flex',alignItems:'center',gap:4,flexWrap:'wrap'}}>
+          <span>📞 {displayContact(c.contact)}</span>
+          <span style={{color:'var(--text3)'}}>·</span>
+          <span>🕐 {formatDate(c.updatedat||c.createdat)}</span>
         </div>
-      </div>)}
-    </div>}
+        {c.report&&<div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'6px 10px',borderRadius:6,marginTop:4,lineHeight:1.5}}>{String(c.report).slice(0,100)}{String(c.report).length>100?'...':''}</div>}
+        <div style={{marginTop:10,display:'flex',gap:6}}>
+          {!CLOSED_STATUSES.includes(c.status)&&
+            <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--yellow)'}}
+              onClick={e=>{e.stopPropagation();if(window.confirm('ส่งเคส '+c.caseid+' ขึ้นตลาด?'))api('sendToMarket',{caseId:c.caseid,sales:currentUser.name}).then(()=>load());}}>
+              ⬆ ส่งตลาด
+            </button>
+          }
+        </div>
+      </div>)
+    }
     {sel&&<CaseModal caseData={sel} users={users} currentUser={currentUser} onClose={()=>setSel(null)} onUpdated={load}/>}
   </div>;
 }
