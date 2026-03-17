@@ -88,9 +88,43 @@ tr.clickable{cursor:pointer;}
 .s-release{background:#0a2418;color:#3fb950;}
 .s-other{background:#2d1500;color:#ffa657;}
 .s-throw{background:#21262d;color:#6e7681;}
-/* Market Card */
+/* Market Card (old - for other pages) */
 .market-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;}
 .market-card:hover{border-color:var(--blue2);}
+/* New Market Layout */
+.mk-page{display:flex;flex-direction:column;min-height:100vh;}
+.mk-hero{background:linear-gradient(135deg,#0d1b2a 0%,#1a2744 60%,#0f2233 100%);padding:24px 24px 0;border-bottom:1px solid var(--border);}
+.mk-hero-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;}
+.mk-stats{display:flex;gap:4px;}
+.mk-stat{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:12px 20px;text-align:center;min-width:90px;}
+.mk-stat-num{font-size:26px;font-weight:800;line-height:1;}
+.mk-stat-lbl{font-size:11px;color:var(--text2);margin-top:3px;}
+.mk-body{display:flex;flex:1;gap:0;}
+.mk-cards-area{flex:1;padding:20px;min-width:0;}
+.mk-sidebar{width:280px;flex-shrink:0;border-left:1px solid var(--border);padding:16px;background:var(--bg2);}
+.mk-cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+.mkc{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;transition:all .2s;cursor:default;}
+.mkc:hover{border-color:var(--blue2);box-shadow:0 4px 20px rgba(31,111,235,.15);}
+.mkc-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
+.mkc-id{font-size:15px;font-weight:800;color:var(--blue);}
+.mkc-date{font-size:11px;background:#2d2000;color:var(--yellow);padding:3px 8px;border-radius:20px;border:1px solid #4a3500;}
+.mkc-name{font-size:15px;font-weight:700;margin-bottom:8px;}
+.mkc-badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+.mkc-contact{font-size:12px;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.mkc-report{font-size:12px;color:var(--text2);background:var(--bg3);padding:8px 10px;border-radius:6px;margin-bottom:12px;line-height:1.6;max-height:72px;overflow:hidden;}
+.mkc-actions{display:flex;gap:8px;}
+.btn-claim{flex:1;background:var(--blue2);color:#fff;border:none;border-radius:8px;padding:10px;font-size:14px;font-weight:700;cursor:pointer;transition:all .15s;}
+.btn-claim:hover{background:#388bfd;transform:translateY(-1px);}
+.btn-claim:disabled{background:#1a3a5c;color:#4a7ab5;cursor:not-allowed;transform:none;}
+.btn-skip{background:var(--bg3);color:var(--text2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px;cursor:pointer;transition:all .15s;}
+.btn-skip:hover{background:var(--bg4);}
+.mk-sb-section{margin-bottom:20px;}
+.mk-sb-title{font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.5px;}
+.lb-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);}
+.lb-rank{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;}
+.sb-stat-row{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg3);border-radius:8px;margin-bottom:6px;}
+@media(max-width:900px){.mk-sidebar{display:none;}}
+@media(max-width:600px){.mk-cards-grid{grid-template-columns:1fr;}.mk-hero{padding:16px 16px 0;}.mk-cards-area{padding:12px;}.mk-stats{flex-wrap:wrap;gap:6px;}.mk-stat{min-width:70px;padding:10px 12px;}}
 /* Notif dot */
 .notif-dot{width:8px;height:8px;background:var(--red);border-radius:50%;display:inline-block;}
 /* Loading */
@@ -534,24 +568,37 @@ function AddBookingModal({currentUser,users,onClose,onAdded}){
 // ============================================================
 // NOTIFICATION PANEL
 // ============================================================
-function NotifPanel({user,onClose}){
+function NotifPanel({user,onClose,onCountChange}){
   const [notifs,setNotifs]=useState([]);
   const [loading,setLoading]=useState(true);
   useEffect(()=>{api('getNotifications',{sales:user.name}).then(r=>{if(r.success)setNotifs(r.data||[]);setLoading(false);});},[]);
   async function markRead(id){
     await api('markNotifRead',{notifId:id});
-    setNotifs(n=>n.map(x=>x.notifId===id?{...x,'สถานะ':'read'}:x));
+    const updated=notifs.map(x=>x.notifId===id?{...x,'สถานะ':'read'}:x);
+    setNotifs(updated);
+    if(onCountChange)onCountChange(updated.filter(n=>n['สถานะ']==='unread').length);
   }
-  return <div style={{position:'fixed',top:56,right:16,width:320,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:10,boxShadow:'var(--shadow)',zIndex:200,maxHeight:400,overflowY:'auto'}}>
+  async function markAllRead(){
+    const unread=notifs.filter(n=>n['สถานะ']==='unread');
+    for(const n of unread) await api('markNotifRead',{notifId:n.notifId});
+    setNotifs(prev=>prev.map(x=>({...x,'สถานะ':'read'})));
+    if(onCountChange)onCountChange(0);
+  }
+  return <div style={{position:'fixed',top:56,right:16,width:320,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:10,boxShadow:'var(--shadow)',zIndex:200,maxHeight:420,overflowY:'auto'}}>
     <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
       <span style={{fontWeight:700}}>การแจ้งเตือน</span>
-      <button className="btn btn-ghost" style={{padding:'2px 8px'}} onClick={onClose}><Ico.x/></button>
+      <div style={{display:'flex',gap:6}}>
+        <button className="btn btn-ghost" style={{padding:'2px 8px',fontSize:11}} onClick={markAllRead}>อ่านทั้งหมด</button>
+        <button className="btn btn-ghost" style={{padding:'2px 8px'}} onClick={onClose}><Ico.x/></button>
+      </div>
     </div>
     {loading?<Loading/>:notifs.length===0?<p style={{padding:20,textAlign:'center',color:'var(--text2)',fontSize:13}}>ไม่มีการแจ้งเตือน</p>:
-    notifs.slice(0,20).map(n=><div key={n.notifId} style={{padding:'10px 16px',borderBottom:'1px solid var(--border)',background:n['สถานะ']==='unread'?'rgba(88,166,255,.05)':'transparent',cursor:'pointer'}} onClick={()=>markRead(n.notifId)}>
-      <div style={{fontSize:13}}>{n.message}</div>
-      <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{String(n['วันที่']||'')}</div>
-      {n['สถานะ']==='unread'&&<span style={{float:'right',marginTop:-20,display:'inline-block',width:6,height:6,borderRadius:'50%',background:'var(--blue)'}}/>}
+    notifs.slice(0,30).map(n=><div key={n.notifId} style={{padding:'10px 16px',borderBottom:'1px solid var(--border)',background:n['สถานะ']==='unread'?'rgba(88,166,255,.06)':'transparent',cursor:'pointer'}} onClick={()=>markRead(n.notifId)}>
+      <div style={{fontSize:13,display:'flex',gap:8,alignItems:'flex-start'}}>
+        {n['สถานะ']==='unread'&&<span style={{width:7,height:7,borderRadius:'50%',background:'var(--blue)',flexShrink:0,marginTop:4}}/>}
+        <span style={{color:n['สถานะ']==='unread'?'var(--text)':'var(--text2)'}}>{n.message}</span>
+      </div>
+      <div style={{fontSize:11,color:'var(--text3)',marginTop:3,paddingLeft:n['สถานะ']==='unread'?15:0}}>{String(n['วันที่']||'')}</div>
     </div>)}
   </div>;
 }
@@ -638,14 +685,27 @@ function AdminCurrentCases({currentUser,users}){
 }
 
 // ============================================================
-// ADMIN — MARKET
+// ADMIN — MARKET (New Card Grid Design)
 // ============================================================
 function AdminMarket({currentUser,users}){
   const [cases,setCases]=useState([]);
+  const [allCases,setAllCases]=useState([]);
   const [loading,setLoading]=useState(true);
   const [confirm,setConfirm]=useState(null);
+  const [dashboard,setDashboard]=useState(null);
+  const [filterSales,setFilterSales]=useState('all');
 
-  const load=useCallback(()=>{setLoading(true);api('getMarket',{}).then(r=>{if(r.success)setCases(r.data||[]);setLoading(false);});},[]);
+  const load=useCallback(()=>{
+    setLoading(true);
+    Promise.all([
+      api('getMarket',{}),
+      api('getDashboard',{role:'Admin'})
+    ]).then(([mr,dr])=>{
+      if(mr.success){setCases(mr.data||[]);setAllCases(mr.data||[]);}
+      if(dr.success)setDashboard(dr.data);
+      setLoading(false);
+    });
+  },[]);
   useEffect(()=>{load();},[load]);
 
   async function closeCase(caseId){
@@ -653,31 +713,96 @@ function AdminMarket({currentUser,users}){
     load();
   }
 
-  return <div className="page">
-    <div className="page-hd">
-      <div><div className="page-title">🏪 ตลาดเคส</div><div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>{cases.length} เคสในตลาด</div></div>
-      <button className="btn btn-ghost" onClick={load}>🔄 รีเฟรช</button>
-    </div>
-    <div className="card" style={{padding:0}}>
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>รหัสเคส</th><th>ชื่อลูกค้า</th><th>ติดต่อ</th><th>รีพอร์ต</th><th>เซลส์เดิม</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-          <tbody>
-            {loading?<tr><td colSpan={7}><Loading/></td></tr>:
-            cases.length===0?<tr><td colSpan={7} style={{textAlign:'center',padding:30,color:'var(--text2)'}}>ไม่มีเคสในตลาด</td></tr>:
-            cases.map((c,i)=><tr key={i}>
-              <td><span style={{color:'var(--blue)',fontWeight:700}}>{c.ID}</span></td>
-              <td>{c.name}</td>
-              <td style={{fontSize:13}}>{c.contact||'-'}</td>
-              <td style={{fontSize:12,color:'var(--text2)',maxWidth:200}}><div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:180}}>{c.report||'-'}</div></td>
-              <td><span style={{color:'var(--orange)'}}>{c.old_sales||'-'}</span></td>
-              <td><StatusBadge status={c.status}/></td>
-              <td><button className="btn btn-danger" style={{fontSize:12,padding:'4px 10px'}} onClick={()=>setConfirm(c.ID)}>ปิดเคส</button></td>
-            </tr>)}
-          </tbody>
-        </table>
+  const filtered=filterSales==='all'?cases:cases.filter(c=>c.old_sales===filterSales);
+  const salesList=users.filter(u=>u.role==='Sales');
+  const total=allCases.length;
+  const owned=allCases.filter(c=>c.PoolStatus==='ปิด').length;
+
+  function getDateBadge(c){
+    const id=String(c.ID||'');
+    if(id.length>=6){const yy=id.slice(0,2),mm=id.slice(2,4);return `25${yy} (พ.ศ.${parseInt('25'+yy)+543-2500})`;}
+    return '';
+  }
+
+  return <div className="mk-page">
+    {/* Hero Header */}
+    <div className="mk-hero">
+      <div className="mk-hero-top">
+        <div>
+          <div style={{fontSize:22,fontWeight:800,display:'flex',alignItems:'center',gap:8}}>🏪 ตลาดเคส <span style={{fontSize:13,fontWeight:400,color:'var(--text2)'}}>Admin View</span></div>
+          <div style={{fontSize:13,color:'var(--text2)',marginTop:4}}>ภาพรวมเคสทั้งหมดในตลาด — สามารถปิดเคสได้</div>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <select value={filterSales} onChange={e=>setFilterSales(e.target.value)} style={{minWidth:120,fontSize:13}}>
+            <option value="all">ทุกเซลส์</option>
+            {salesList.map(u=><option key={u.userId} value={u.name}>{u.name}</option>)}
+          </select>
+          <button className="btn btn-ghost" onClick={load} style={{fontSize:13}}>🔄 รีเฟรช</button>
+        </div>
+      </div>
+      <div className="mk-stats">
+        {[['ว่างอยู่',total-owned,'var(--blue)'],['มีเจ้าของแล้ว',owned,'var(--orange)'],['ทั้งหมด',total,'var(--text)']].map(([l,v,c])=>
+          <div key={l} className="mk-stat"><div className="mk-stat-num" style={{color:c}}>{v}</div><div className="mk-stat-lbl">{l}</div></div>
+        )}
       </div>
     </div>
+
+    <div className="mk-body">
+      {/* Cards Area */}
+      <div className="mk-cards-area">
+        {loading?<Loading/>:filtered.length===0?
+        <div style={{textAlign:'center',padding:60,color:'var(--text2)'}}>
+          <div style={{fontSize:40,marginBottom:12}}>📭</div>
+          <div>ไม่มีเคสในตลาด</div>
+        </div>:
+        <>
+          <div style={{fontSize:13,color:'var(--text2)',marginBottom:12}}>แสดง {filtered.length} จาก {total} เคส</div>
+          <div className="mk-cards-grid">
+            {filtered.map((c,i)=><div key={i} className="mkc">
+              <div className="mkc-top">
+                <span className="mkc-id">{c.ID}</span>
+                <span className="mkc-date">📅 {getDateBadge(c)}</span>
+              </div>
+              <div className="mkc-name">{c.name}</div>
+              <div className="mkc-badges">
+                <StatusBadge status={c.status}/>
+                <span className="badge" style={{background:'rgba(255,166,87,.1)',color:'var(--orange)',border:'1px solid rgba(255,166,87,.3)'}}>เคสจาก {c.old_sales||'-'}</span>
+              </div>
+              <div className="mkc-contact">📞 <span>{c.contact||'-'}</span>
+                {c.contact&&<button className="btn-ghost" style={{border:'none',background:'none',color:'var(--blue)',cursor:'pointer',fontSize:11}} onClick={()=>navigator.clipboard&&navigator.clipboard.writeText(c.contact)}>คัดลอก</button>}
+              </div>
+              {c.report&&<div className="mkc-report">{String(c.report).slice(0,120)}{c.report.length>120?'...':''}</div>}
+              <button className="btn btn-danger" style={{width:'100%',padding:'9px',fontSize:13}} onClick={()=>setConfirm(c.ID)}>🗑 ปิดเคส</button>
+            </div>)}
+          </div>
+        </>}
+      </div>
+
+      {/* Sidebar */}
+      <div className="mk-sidebar">
+        <div className="mk-sb-section">
+          <div className="mk-sb-title">🏆 เคสในตลาดแต่ละเซลส์</div>
+          {salesList.map((u,i)=>{
+            const cnt=allCases.filter(c=>c.old_sales===u.name).length;
+            return <div key={i} className="lb-row">
+              <div className="lb-rank" style={{background:i===0?'#3d2a00':i===1?'#1c1c2e':i===2?'#1a2a00':'var(--bg3)',color:i===0?'#ffd700':i===1?'#c0c0c0':i===2?'#cd7f32':'var(--text2)'}}>
+                {i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13}}>{u.name}</div>
+              </div>
+              <span style={{fontWeight:700,color:'var(--blue)'}}>{cnt}</span>
+            </div>;
+          })}
+        </div>
+        {dashboard&&<div className="mk-sb-section">
+          <div className="mk-sb-title">📊 สรุปเดือนนี้</div>
+          <div className="sb-stat-row"><span style={{fontSize:13}}>เคสทั้งหมด</span><span style={{fontWeight:700,color:'var(--blue)'}}>{dashboard.total?.cases||0}</span></div>
+          <div className="sb-stat-row"><span style={{fontSize:13}}>เคสในตลาด</span><span style={{fontWeight:700,color:'var(--orange)'}}>{total}</span></div>
+        </div>}
+      </div>
+    </div>
+
     {confirm&&<Confirm msg={`ปิดเคส ${confirm} ออกจากตลาด?`} onOk={()=>{closeCase(confirm);setConfirm(null);}} onCancel={()=>setConfirm(null)}/>}
   </div>;
 }
@@ -785,57 +910,152 @@ function BookingDetailModal({booking,onClose,onUpdated}){
 }
 
 // ============================================================
-// SALES — MARKET
+// SALES — MARKET (New Card Grid Design)
 // ============================================================
 function SalesMarket({currentUser}){
   const [cases,setCases]=useState([]);
+  const [claimedCases,setClaimedCases]=useState([]);
   const [loading,setLoading]=useState(true);
   const [claiming,setClaiming]=useState(null);
   const [msg,setMsg]=useState('');
+  const [dashboard,setDashboard]=useState(null);
+  const [leaderboard,setLeaderboard]=useState([]);
 
-  const load=useCallback(()=>{setLoading(true);api('getMarket',{sales:currentUser.name}).then(r=>{if(r.success)setCases(r.data||[]);setLoading(false);});},[currentUser.name]);
+  const load=useCallback(()=>{
+    setLoading(true);
+    Promise.all([
+      api('getMarket',{sales:currentUser.name}),
+      api('getClaimedCases',{sales:currentUser.name}),
+      api('getDashboard',{role:'Admin'})
+    ]).then(([mr,cr,dr])=>{
+      if(mr.success)setCases(mr.data||[]);
+      if(cr.success)setClaimedCases(cr.data||[]);
+      if(dr.success){setLeaderboard(dr.data?.sales||[]);}
+      setLoading(false);
+    });
+  },[currentUser.name]);
   useEffect(()=>{load();},[load]);
 
   async function claim(caseId){
     setClaiming(caseId);
     const r=await api('claimCase',{caseId,sales:currentUser.name});
     setClaiming(null);
-    if(r.success){setMsg('✅ รับเคสสำเร็จ');load();setTimeout(()=>setMsg(''),3000);}
+    if(r.success){setMsg('✅ รับเคสสำเร็จ! ตรวจสอบได้ที่หน้า "รับจากตลาด"');load();setTimeout(()=>setMsg(''),4000);}
     else{setMsg('❌ '+r.error);setTimeout(()=>setMsg(''),3000);}
   }
 
   async function notInterested(caseId){
-    // Mark as not interested by adding to expired
-    const r=await api('claimCase',{caseId,sales:'_skip_'+currentUser.name});
+    await api('returnCase',{caseId,sales:'_skip_'+currentUser.name});
     load();
   }
 
-  return <div className="page">
-    <div className="page-hd"><div className="page-title">🏪 ตลาดเคส</div><button className="btn btn-ghost" onClick={load}>🔄</button></div>
-    {msg&&<div style={{background:msg.startsWith('✅')?'#1a4731':'#3d0a0a',border:`1px solid ${msg.startsWith('✅')?'var(--green)':'var(--red)'}`,padding:'10px 16px',borderRadius:8,marginBottom:16,fontSize:14}}>{msg}</div>}
-    {loading?<Loading/>:cases.length===0?
-    <div style={{textAlign:'center',padding:60,color:'var(--text2)'}}>
-      <div style={{fontSize:40,marginBottom:12}}>📭</div>
-      <div>ไม่มีเคสในตลาดสำหรับคุณ</div>
-    </div>:
-    cases.map((c,i)=><div key={i} className="market-card">
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
+  function getDateBadge(c){
+    const id=String(c.ID||'');
+    if(id.length>=4){const yy=id.slice(0,2),mm=id.slice(2,4);return `25${yy} (พ.ศ.${parseInt('25'+yy)+543-2500})`;}
+    return '';
+  }
+
+  const myStats=leaderboard.find(s=>s.name===currentUser.name)||{};
+  const totalInMarket=cases.length;
+  const myClaimed=claimedCases.length;
+
+  // Leaderboard sorted by claimed
+  const lbSorted=[...leaderboard].sort((a,b)=>(b.claimedCases||0)-(a.claimedCases||0));
+
+  return <div className="mk-page">
+    {/* Hero Header */}
+    <div className="mk-hero">
+      <div className="mk-hero-top">
         <div>
-          <div style={{fontWeight:700,color:'var(--blue)',fontSize:16}}>{c.ID}</div>
-          <div style={{fontSize:14,fontWeight:500,marginTop:2}}>{c.name}</div>
+          <div style={{fontSize:20,fontWeight:800,display:'flex',alignItems:'center',gap:8}}>🎯 ตลาดเคส</div>
+          <div style={{fontSize:13,color:'var(--text2)',marginTop:4}}>เลือกลูกค้าที่ใช่คนดูแล — ใครไวได้ก่อน</div>
         </div>
-        <StatusBadge status={c.status}/>
+        <button className="btn btn-ghost" onClick={load} style={{fontSize:13}}>🔄</button>
       </div>
-      <div style={{fontSize:13,color:'var(--text2)',marginBottom:8}}>
-        <span style={{marginRight:12}}>📞 <span style={{filter:'blur(4px)',userSelect:'none'}}>ปิดอยู่</span></span>
-        <span>🧑‍💼 จากเซลส์: <span style={{color:'var(--orange)'}}>{c.old_sales||'-'}</span></span>
+      <div className="mk-stats">
+        {[
+          ['ว่างอยู่',totalInMarket,'var(--blue)'],
+          ['มีเจ้าของแล้ว',0,'var(--orange)'],
+          ['ของฉัน',myClaimed,'var(--green)'],
+          ['ทั้งหมด',totalInMarket,'var(--text)']
+        ].map(([l,v,c])=>
+          <div key={l} className="mk-stat"><div className="mk-stat-num" style={{color:c}}>{v}</div><div className="mk-stat-lbl">{l}</div></div>
+        )}
       </div>
-      {c.report&&<div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'8px 10px',borderRadius:6,marginBottom:10,lineHeight:1.5}}>{String(c.report).slice(0,150)}{c.report.length>150?'...':''}</div>}
-      <div style={{display:'flex',gap:8}}>
-        <button className="btn btn-primary" style={{flex:1}} onClick={()=>claim(c.ID)} disabled={claiming===c.ID}>{claiming===c.ID?'⏳ กำลังรับ...':'✅ รับเคส'}</button>
-        <button className="btn btn-ghost" onClick={()=>notInterested(c.ID)}>ไม่สนใจ</button>
+    </div>
+
+    <div className="mk-body">
+      {/* Cards Area */}
+      <div className="mk-cards-area">
+        {msg&&<div style={{background:msg.startsWith('✅')?'rgba(63,185,80,.1)':'rgba(248,81,73,.1)',border:`1px solid ${msg.startsWith('✅')?'var(--green)':'var(--red)'}`,padding:'10px 16px',borderRadius:8,marginBottom:14,fontSize:13}}>{msg}</div>}
+        {loading?<Loading/>:cases.length===0?
+        <div style={{textAlign:'center',padding:60,color:'var(--text2)'}}>
+          <div style={{fontSize:48,marginBottom:12}}>📭</div>
+          <div style={{fontSize:16,fontWeight:600}}>ไม่มีเคสในตลาดสำหรับคุณ</div>
+          <div style={{fontSize:13,marginTop:8}}>รอเคสใหม่เข้ามา หรือเช็คอีกครั้งในภายหลัง</div>
+        </div>:
+        <>
+          <div style={{fontSize:13,color:'var(--text2)',marginBottom:12}}>พบ {cases.length} เคส ที่รอคนดูแล</div>
+          <div className="mk-cards-grid">
+            {cases.map((c,i)=><div key={i} className="mkc">
+              <div className="mkc-top">
+                <span className="mkc-id">{c.ID}</span>
+                <span className="mkc-date">📅 {getDateBadge(c)}</span>
+              </div>
+              <div className="mkc-name">{c.name}</div>
+              <div className="mkc-badges">
+                <span className="badge s-wait" style={{fontSize:11}}>สถานะเดิม: {c.status||'-'}</span>
+                <span className="badge" style={{background:'rgba(255,166,87,.1)',color:'var(--orange)',border:'1px solid rgba(255,166,87,.3)',fontSize:11}}>เคสจาก {c.old_sales||'-'}</span>
+              </div>
+              <div className="mkc-contact">
+                📞 <span style={{filter:'blur(5px)',userSelect:'none',letterSpacing:1}}>••••••••••</span>
+                <span style={{fontSize:11,color:'var(--text3)'}}>(เห็นหลังรับเคส)</span>
+              </div>
+              {c.report&&<div className="mkc-report">{String(c.report).slice(0,130)}{c.report.length>130?'...':''}</div>}
+              <div className="mkc-actions">
+                <button className="btn-claim" onClick={()=>claim(c.ID)} disabled={claiming===c.ID}>
+                  {claiming===c.ID?'⏳ กำลังรับ...':'รับเคสนี้ →'}
+                </button>
+                <button className="btn-skip" onClick={()=>notInterested(c.ID)} title="ไม่สนใจ">✕</button>
+              </div>
+            </div>)}
+          </div>
+        </>}
       </div>
-    </div>)}
+
+      {/* Sidebar */}
+      <div className="mk-sidebar">
+        {/* Leaderboard */}
+        <div className="mk-sb-section">
+          <div className="mk-sb-title">🏆 Leaderboard รับเคส</div>
+          {lbSorted.length===0?<div style={{fontSize:12,color:'var(--text2)',textAlign:'center',padding:'12px 0'}}>ยังไม่มีข้อมูล</div>:
+          lbSorted.map((s,i)=><div key={i} className="lb-row">
+            <div className="lb-rank" style={{background:i===0?'#3d2a00':i===1?'#1c1c2e':i===2?'#1a2a00':'var(--bg3)',color:i===0?'#ffd700':i===1?'#c0c0c0':i===2?'#cd7f32':'var(--text2)'}}>
+              {i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:s.name===currentUser.name?700:500,fontSize:13,color:s.name===currentUser.name?'var(--blue)':'var(--text)'}}>{s.name}{s.name===currentUser.name?' (ฉัน)':''}</div>
+            </div>
+            <span style={{fontWeight:700,color:'var(--blue)',fontSize:14}}>{s.claimedCases||0}</span>
+          </div>)}
+        </div>
+
+        {/* My Stats */}
+        <div className="mk-sb-section">
+          <div className="mk-sb-title">📊 สถิติของฉัน</div>
+          <div style={{display:'flex',flex:1,flexDirection:'column',gap:6}}>
+            {[
+              ['เคสที่รับไปแล้ว',myClaimed,'var(--blue)'],
+              ['ปล่อยแล้ว',myStats.sold||0,'var(--green)'],
+              ['เคสปัจจุบัน',myStats.currentCases||0,'var(--purple)']
+            ].map(([l,v,c])=><div key={l} className="sb-stat-row">
+              <span style={{fontSize:13}}>{l}</span>
+              <span style={{fontWeight:800,fontSize:16,color:c}}>{v}</span>
+            </div>)}
+          </div>
+        </div>
+      </div>
+    </div>
   </div>;
 }
 
@@ -1098,7 +1318,7 @@ function AdminApp({currentUser,onLogout}){
       </div>
     </div>
     <div className="main-content">{pages[page]||pages.cases}</div>
-    {showNotif&&<NotifPanel user={currentUser} onClose={()=>setShowNotif(false)}/>}
+    {showNotif&&<NotifPanel user={currentUser} onClose={()=>setShowNotif(false)} onCountChange={setNotifCount}/>}
   </div>;
 }
 
@@ -1113,7 +1333,10 @@ function SalesApp({currentUser,onLogout}){
 
   useEffect(()=>{
     api('getUsers').then(r=>{if(r.success)setUsers(r.data||[]);});
-    api('getNotifications',{sales:currentUser.name}).then(r=>{if(r.success){const u=r.data.filter(n=>n['สถานะ']==='unread');setNotifCount(u.length);}});
+    function refreshNotif(){api('getNotifications',{sales:currentUser.name}).then(r=>{if(r.success){const u=r.data.filter(n=>n['สถานะ']==='unread');setNotifCount(u.length);}});}
+    refreshNotif();
+    const t=setInterval(refreshNotif,30000);
+    return ()=>clearInterval(t);
   },[currentUser.name]);
 
   const pages={market:<SalesMarket currentUser={currentUser}/>,cases:<SalesCurrentCases currentUser={currentUser} users={users}/>,claimed:<SalesClaimedCases currentUser={currentUser} users={users}/>,dashboard:<SalesDashboard currentUser={currentUser}/>};
@@ -1144,7 +1367,7 @@ function SalesApp({currentUser,onLogout}){
         {n.icon}<span>{n.label}</span>
       </div>)}
     </div>
-    {showNotif&&<NotifPanel user={currentUser} onClose={()=>setShowNotif(false)}/>}
+    {showNotif&&<NotifPanel user={currentUser} onClose={()=>setShowNotif(false)} onCountChange={setNotifCount}/>}
   </div>;
 }
 
