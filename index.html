@@ -515,7 +515,25 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
 function AddCaseModal({users,currentUser,onClose,onAdded}){
   const [form,setForm]=useState({customername:'',contact:'',contact_by:'ไลน์',report:'',status:'รอข้อมูล',sales:currentUser.role==='Admin'?'':currentUser.name,sent:'ปกติ'});
   const [loading,setLoading]=useState(false);
+  const [previewId,setPreviewId]=useState('');
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+
+  useEffect(()=>{
+    // Generate preview case ID
+    const d=new Date();
+    const yy=String(d.getFullYear()).slice(-2);
+    const mm=String(d.getMonth()+1).padStart(2,'0');
+    const pre=yy+mm;
+    api('getCases',{all:'true'}).then(r=>{
+      if(r.success){
+        const max=(r.data||[]).filter(c=>String(c.caseid).startsWith(pre)).reduce((m,c)=>{const n=parseInt(String(c.caseid).slice(4))||0;return n>m?n:m;},0);
+        setPreviewId(pre+String(max+1).padStart(3,'0'));
+      } else {
+        setPreviewId(pre+'???');
+      }
+    });
+  },[]);
+
   async function submit(){
     if(!form.customername||!form.sales) return alert('กรุณากรอกชื่อลูกค้าและเลือกเซลส์');
     setLoading(true);
@@ -529,6 +547,12 @@ function AddCaseModal({users,currentUser,onClose,onAdded}){
     <button className="btn btn-primary" onClick={submit} disabled={loading}>{loading?'กำลังบันทึก...':'บันทึก'}</button>
   </>}>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="form-group" style={{gridColumn:'1/-1'}}>
+        <label>รหัสเคส (สร้างอัตโนมัติ)</label>
+        <div style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 12px',fontSize:15,fontWeight:700,color:'var(--blue)',letterSpacing:1}}>
+          {previewId||'กำลังสร้าง...'}
+        </div>
+      </div>
       <div className="form-group" style={{gridColumn:'1/-1'}}><label>ชื่อลูกค้า *</label><input value={form.customername} onChange={e=>set('customername',e.target.value)} placeholder="ชื่อ-นามสกุล"/></div>
       <div className="form-group"><label>ติดต่อโดย</label><select value={form.contact_by} onChange={e=>set('contact_by',e.target.value)}>{CONTACT_BY.map(c=><option key={c}>{c}</option>)}</select></div>
       <div className="form-group"><label>ข้อมูลติดต่อ</label><input value={form.contact} onChange={e=>set('contact',e.target.value)} placeholder="เบอร์ / ไลน์ / ID"/></div>
@@ -619,6 +643,7 @@ function AdminCurrentCases({currentUser,users}){
   const [cases,setCases]=useState([]);
   const [loading,setLoading]=useState(true);
   const [filter,setFilter]=useState({sales:'all',status:'',q:''});
+  const [sortDir,setSortDir]=useState('desc'); // desc=ใหม่สุดก่อน, asc=เก่าสุดก่อน
   const [sel,setSel]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [showAddBook,setShowAddBook]=useState(false);
@@ -641,6 +666,9 @@ function AdminCurrentCases({currentUser,users}){
     if(filter.sales!=='all'&&c.sales!==filter.sales)return false;
     if(filter.status&&c.status!==filter.status)return false;
     return true;
+  }).sort((a,b)=>{
+    const av=String(a.caseid||''), bv=String(b.caseid||'');
+    return sortDir==='desc'?bv.localeCompare(av):av.localeCompare(bv);
   });
 
   const salesList=users.filter(u=>u.role==='Sales');
@@ -671,7 +699,11 @@ function AdminCurrentCases({currentUser,users}){
     <div className="card" style={{padding:0}}>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>รหัสเคส</th><th>ชื่อลูกค้า</th><th>ติดต่อ</th><th>สถานะ</th><th>เซลส์</th><th>อัปเดตล่าสุด</th></tr></thead>
+          <thead><tr>
+            <th onClick={()=>setSortDir(d=>d==='desc'?'asc':'desc')} style={{cursor:'pointer',userSelect:'none',whiteSpace:'nowrap'}}>
+              รหัสเคส {sortDir==='desc'?'↓':'↑'}
+            </th>
+            <th>ชื่อลูกค้า</th><th>ติดต่อ</th><th>สถานะ</th><th>เซลส์</th><th>อัปเดตล่าสุด</th></tr></thead>
           <tbody>
             {loading?<tr><td colSpan={6}><Loading/></td></tr>:
             filtered.length===0?<tr><td colSpan={6} style={{textAlign:'center',padding:30,color:'var(--text2)'}}>ไม่พบเคส</td></tr>:
