@@ -627,40 +627,72 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
 // ============================================================
 function QrUploader({value,onChange}){
   const [uploading,setUploading]=useState(false);
-  const [preview,setPreview]=useState(value||'');
+  const [uploadStatus,setUploadStatus]=useState(''); // 'uploading'|'done'|'error'|''
+  // ใช้ ref เก็บ preview แยก จาก state เพื่อป้องกัน reset
+  const [preview,setPreview]=useState(()=>value||'');
   const fileRef=React.useRef();
+
+  // sync ถ้า value เปลี่ยนจากภายนอก (เช่น clear)
+  const prevValueRef=React.useRef(value);
+  useEffect(()=>{
+    if(!value&&prevValueRef.current){setPreview('');}
+    prevValueRef.current=value;
+  },[value]);
+
+  // บีบอัดรูปด้วย canvas → base64 jpeg quality 0.7, max 600px
+  function compressImage(file){
+    return new Promise((resolve)=>{
+      const reader=new FileReader();
+      reader.onload=(ev)=>{
+        const img=new Image();
+        img.onload=()=>{
+          const MAX=600;
+          let w=img.width,h=img.height;
+          if(w>MAX||h>MAX){const ratio=Math.min(MAX/w,MAX/h);w=Math.round(w*ratio);h=Math.round(h*ratio);}
+          const canvas=document.createElement('canvas');
+          canvas.width=w;canvas.height=h;
+          const ctx=canvas.getContext('2d');
+          ctx.drawImage(img,0,0,w,h);
+          resolve(canvas.toDataURL('image/jpeg',0.75));
+        };
+        img.onerror=()=>resolve(ev.target.result); // fallback original
+        img.src=ev.target.result;
+      };
+      reader.onerror=()=>resolve('');
+      reader.readAsDataURL(file);
+    });
+  }
 
   async function handleFile(e){
     const file=e.target.files[0];
     if(!file) return;
     if(!file.type.startsWith('image/')) return alert('กรุณาเลือกไฟล์รูปภาพเท่านั้น');
-    if(file.size>5*1024*1024) return alert('ไฟล์ต้องไม่เกิน 5MB');
+    if(file.size>10*1024*1024) return alert('ไฟล์ต้องไม่เกิน 10MB');
+
     setUploading(true);
-    try {
-      const reader=new FileReader();
-      reader.onload=async(ev)=>{
-        const base64=ev.target.result;
-        setPreview(base64); // show preview immediately
-        if(API_URL){
-          const r=await api('uploadImage',{base64,mimeType:file.type,filename:file.name});
-          if(r.success){
-            onChange(r.url);
-            setPreview(r.url);
-          } else {
-            // Fallback: store base64 directly (for demo/testing)
-            onChange(base64);
-            alert('อัปโหลดไปยัง Drive ไม่สำเร็จ เก็บเป็น base64 แทน: '+r.error);
-          }
-        } else {
-          // Demo mode: store base64
-          onChange(base64);
+    setUploadStatus('uploading');
+
+    // 1) บีบอัดรูปก่อน
+    const compressed=await compressImage(file);
+    if(!compressed){setUploading(false);setUploadStatus('error');return;}
+
+    // 2) แสดงรูปและบันทึก base64 ทันที (ไม่รอ Drive)
+    setPreview(compressed);
+    onChange(compressed);
+    setUploading(false);
+    setUploadStatus('done');
+
+    // 3) พยายาม upload Drive ในพื้นหลัง (silent — ไม่บล็อก UI)
+    if(API_URL){
+      try{
+        const r=await api('uploadImage',{base64:compressed,mimeType:'image/jpeg',filename:'qr_'+Date.now()+'.jpg'});
+        if(r&&r.success&&r.url){
+          // อัปเดต URL Drive แทน base64 (ประหยัด storage)
+          onChange(r.url);
+          setPreview(r.url);
+          setUploadStatus('cloud');
         }
-        setUploading(false);
-      };
-      reader.readAsDataURL(file);
-    } catch(err){
-      setUploading(false);
-      alert('เกิดข้อผิดพลาด: '+err);
+      }catch(err){/* silent fail — base64 ยังอยู่ */}
     }
   }
 
@@ -674,16 +706,42 @@ function QrUploader({value,onChange}){
     }
   }
 
+  function clearQR(e){
+    e.stopPropagation();
+    e.preventDefault();
+    setPreview('');
+    onChange('');
+    setUploadStatus('');
+    // reset input เพื่อให้เลือกไฟล์เดิมได้อีก
+    if(fileRef.current) fileRef.current.value='';
+  }
+
   return <div onPaste={handlePaste}>
-    <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleFile} capture="environment"/>
+    <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleFile}/>
     {preview?
       <div style={{position:'relative',display:'inline-block',width:'100%'}}>
-        <img src={preview} alt="QR Code" style={{width:'100%',maxHeight:200,objectFit:'contain',borderRadius:8,border:'1px solid var(--border)',background:'var(--bg3)'}}/>
-        <button onClick={()=>{setPreview('');onChange('');}} style={{position:'absolute',top:6,right:6,background:'rgba(0,0,0,.6)',border:'none',borderRadius:'50%',width:24,height:24,color:'#fff',cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+        <img src={preview} alt="QR Code"
+          style={{width:'100%',maxHeight:220,objectFit:'contain',borderRadius:8,border:'1px solid var(--border)',background:'var(--bg3)',display:'block'}}
+          onError={e=>{e.target.style.opacity='0.3';}}
+        />
+        {/* status badge */}
+        {uploadStatus==='uploading'&&<div style={{position:'absolute',bottom:8,left:8,background:'rgba(0,0,0,.7)',color:'#fff',fontSize:11,padding:'3px 8px',borderRadius:20,display:'flex',alignItems:'center',gap:4}}><span className="spin" style={{width:12,height:12,borderWidth:2,marginRight:0}}/> กำลังบันทึก...</div>}
+        {uploadStatus==='cloud'&&<div style={{position:'absolute',bottom:8,left:8,background:'rgba(31,111,235,.8)',color:'#fff',fontSize:11,padding:'3px 8px',borderRadius:20}}>☁️ บันทึกบน Drive</div>}
+        {uploadStatus==='done'&&<div style={{position:'absolute',bottom:8,left:8,background:'rgba(63,185,80,.8)',color:'#fff',fontSize:11,padding:'3px 8px',borderRadius:20}}>✅ บันทึกแล้ว</div>}
+        {/* ปุ่มลบ */}
+        <button type="button" onClick={clearQR} style={{position:'absolute',top:6,right:6,background:'rgba(0,0,0,.65)',border:'none',borderRadius:'50%',width:26,height:26,color:'#fff',cursor:'pointer',fontSize:15,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>✕</button>
+        {/* ปุ่มเปลี่ยนรูป */}
+        <button type="button" onClick={()=>fileRef.current&&fileRef.current.click()} style={{position:'absolute',top:6,right:38,background:'rgba(0,0,0,.65)',border:'none',borderRadius:20,color:'#fff',cursor:'pointer',fontSize:11,padding:'4px 8px'}}>เปลี่ยน</button>
       </div>:
       <div style={{display:'flex',gap:8,flexDirection:'column'}}>
-        <button type="button" className="btn btn-ghost" style={{width:'100%',padding:'14px',display:'flex',flexDirection:'column',alignItems:'center',gap:6,border:'2px dashed var(--border)',borderRadius:8}} onClick={()=>fileRef.current.click()} disabled={uploading}>
-          {uploading?<><span className="spin" style={{width:20,height:20,marginRight:0}}/><span style={{fontSize:13}}>กำลังอัปโหลด...</span></>:<><span style={{fontSize:28}}>📷</span><span style={{fontSize:13}}>แตะเพื่อถ่ายรูป / เลือกรูป QR Code</span><span style={{fontSize:11,color:'var(--text3)'}}>รองรับ JPG, PNG ไม่เกิน 5MB</span></>}
+        <button type="button" className="btn btn-ghost"
+          style={{width:'100%',padding:'14px',display:'flex',flexDirection:'column',alignItems:'center',gap:6,border:'2px dashed var(--border)',borderRadius:8}}
+          onClick={()=>fileRef.current&&fileRef.current.click()}
+          disabled={uploading}>
+          {uploading
+            ?<><span className="spin" style={{width:20,height:20,marginRight:0}}/><span style={{fontSize:13}}>กำลังประมวลผล...</span></>
+            :<><span style={{fontSize:28}}>📷</span><span style={{fontSize:13}}>แตะเพื่อถ่ายรูป / เลือกรูป QR Code</span><span style={{fontSize:11,color:'var(--text3)'}}>รองรับ JPG, PNG สูงสุด 10MB</span></>
+          }
         </button>
         <input value={value||''} onChange={e=>onChange(e.target.value)} placeholder="หรือวาง URL รูปภาพ / ไอดีไลน์" style={{fontSize:13}}/>
       </div>
