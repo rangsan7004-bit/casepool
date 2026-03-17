@@ -1189,40 +1189,246 @@ function AdminMarket({currentUser,users}){
 }
 
 // ============================================================
-// ADMIN — DASHBOARD
+// ADMIN — DASHBOARD (Charts)
 // ============================================================
+function useChartJs(cb, deps){
+  useEffect(()=>{
+    if(window.Chart){ cb(); return; }
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js';
+    s.onload=()=>cb();
+    document.head.appendChild(s);
+  }, deps);
+}
+
+function BarChart({id,labels,datasets,horizontal=false}){
+  const ref=useRef(); const inst=useRef();
+  useChartJs(()=>{
+    inst.current?.destroy();
+    if(!ref.current) return;
+    Chart.defaults.color='#8b949e';
+    inst.current=new Chart(ref.current,{
+      type:'bar',
+      data:{labels,datasets:datasets.map(d=>({...d,borderRadius:5,borderSkipped:false}))},
+      options:{
+        indexAxis:horizontal?'y':'x',
+        responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{position:'bottom',labels:{boxWidth:12,padding:16,font:{size:12}}},tooltip:{callbacks:{label:c=>' '+c.dataset.label+': '+c.raw}}},
+        scales:{x:{grid:{color:'rgba(255,255,255,.05)'},ticks:{font:{size:12}}},y:{grid:{color:'rgba(255,255,255,.05)'},ticks:{font:{size:12},stepSize:1,precision:0}}}
+      }
+    });
+  },[labels,datasets]);
+  useEffect(()=>()=>inst.current?.destroy(),[]);
+  return <canvas ref={ref}/>;
+}
+
+function DonutChart({id,labels,values,colors}){
+  const ref=useRef(); const inst=useRef();
+  useChartJs(()=>{
+    inst.current?.destroy();
+    if(!ref.current) return;
+    inst.current=new Chart(ref.current,{
+      type:'doughnut',
+      data:{labels,datasets:[{data:values,backgroundColor:colors,borderWidth:2,borderColor:'var(--bg2)',hoverOffset:6}]},
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        cutout:'65%',
+        plugins:{legend:{position:'right',labels:{boxWidth:12,padding:10,font:{size:11}}},tooltip:{callbacks:{label:c=>` ${c.label}: ${c.raw} (${Math.round(c.raw/(c.dataset.data.reduce((a,b)=>a+b,0)||1)*100)}%)`}}}
+      }
+    });
+  },[labels,values]);
+  useEffect(()=>()=>inst.current?.destroy(),[]);
+  return <canvas ref={ref}/>;
+}
+
 function AdminDashboard({currentUser}){
   const [data,setData]=useState(null);
+  const [allCases,setAllCases]=useState([]);
   const [loading,setLoading]=useState(true);
-  useEffect(()=>{api('getDashboard',{role:'Admin'}).then(r=>{if(r.success)setData(r.data);setLoading(false);});},[]);
-  if(loading)return <div className="page"><Loading/></div>;
-  if(!data)return <div className="page"><p>ไม่พบข้อมูล</p></div>;
+  const [tab,setTab]=useState('overview');
+
+  const load=useCallback(()=>{
+    cacheClear(['getDashboard','getCases']);
+    Promise.all([
+      api('getDashboard',{role:'Admin'}),
+      api('getCases',{all:'true'})
+    ]).then(([dr,cr])=>{
+      if(dr.success) setData(dr.data);
+      if(cr.success) setAllCases(cr.data||[]);
+      setLoading(false);
+    });
+  },[]);
+  useEffect(()=>{load();},[load]);
+
+  if(loading) return <div className="page"><Loading/></div>;
+  if(!data)   return <div className="page"><p>ไม่พบข้อมูล</p></div>;
+
+  const salesList = data.sales||[];
+  const totalCases = data.total?.cases||0;
+  const totalSold  = salesList.reduce((s,x)=>s+(x.sold||0),0);
+  const totalClaimed=salesList.reduce((s,x)=>s+(x.claimedCases||0),0);
+
+  // สถานะรวมจากทุก sales
+  const statusMap={};
+  salesList.forEach(s=>{ Object.entries(s.statuses||{}).forEach(([k,v])=>{ statusMap[k]=(statusMap[k]||0)+v; }); });
+  const statusEntries=Object.entries(statusMap).sort((a,b)=>b[1]-a[1]);
+
+  // สี palette
+  const PALETTE=['#58a6ff','#bc8cff','#3fb950','#ffa657','#f85149','#d29922','#39d353','#79c0ff','#ffd700','#ff7b72','#a5d6ff','#56d364'];
+  const STATUS_COLORS={'รอข้อมูล':'#6e7681','ไปต่อได้':'#3fb950','เคสเลี้ยง':'#ffa657','เคสวัด 50/50':'#d29922','ติดต่อไม่ได้':'#f85149','ยังไม่สะดวก':'#bc8cff','จอง':'#58a6ff','รอเซ็นต์':'#39d353','รอผล':'#79c0ff','อนุมัติ':'#56d364','ปิดเคส':'#ff6b6b','รีเจค':'#da3633','ปล่อยแล้ว':'#3fb950','ได้รถจากที่อื่น':'#ffa657','โยนเคส':'#ffd700'};
+
+  const tabs=[{k:'overview',l:'ภาพรวม'},{k:'sales',l:'รายเซลส์'},{k:'status',l:'สถานะ'}];
 
   return <div className="page">
-    <div className="page-hd"><div className="page-title">📊 แดชบอร์ด</div></div>
-    <div className="stat-grid">
-      <div className="stat-card"><div className="stat-num" style={{color:'var(--blue)'}}>{data.total?.cases||0}</div><div className="stat-lbl">เคสทั้งหมดเดือนนี้</div></div>
+    <div className="page-hd" style={{marginBottom:16}}>
+      <div className="page-title">📊 แดชบอร์ด</div>
+      <button className="btn btn-ghost" onClick={load} style={{fontSize:13}}>🔄 รีเฟรช</button>
     </div>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:16}}>
-      {(data.sales||[]).map((s,i)=><div key={i} className="card">
-        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
-          <div style={{width:44,height:44,borderRadius:'50%',background:'var(--bg3)',border:'2px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
-            {s.avatar?<img src={s.avatar} style={{width:'100%',height:'100%',objectFit:'cover'}} onError={e=>e.target.style.display='none'}/>:<Ico.user/>}
-          </div>
-          <div><div style={{fontWeight:700,fontSize:15}}>{s.name}</div><div style={{fontSize:12,color:'var(--text2)'}}>Sales</div></div>
+
+    {/* KPI row */}
+    <div className="stat-grid" style={{marginBottom:20}}>
+      {[
+        ['เคสเดือนนี้', totalCases,   'var(--blue)'],
+        ['ปล่อยแล้ว',  totalSold,    'var(--green)'],
+        ['รับจากตลาด', totalClaimed, 'var(--purple)'],
+        ['Sales ทั้งหมด',salesList.length,'var(--orange)'],
+      ].map(([l,v,c])=>
+        <div key={l} className="stat-card">
+          <div className="stat-num" style={{color:c}}>{v}</div>
+          <div className="stat-lbl">{l}</div>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
-          {[['เคสปัจจุบัน',s.currentCases,'var(--blue)'],['รับตลาด',s.claimedCases,'var(--purple)'],['ปล่อยแล้ว',s.sold,'var(--green)']].map(([l,v,c])=>
-            <div key={l} style={{textAlign:'center',background:'var(--bg3)',borderRadius:6,padding:'8px 4px'}}>
-              <div style={{fontSize:20,fontWeight:800,color:c}}>{v||0}</div>
-              <div style={{fontSize:11,color:'var(--text2)'}}>{l}</div>
+      )}
+    </div>
+
+    {/* Tabs */}
+    <div style={{display:'flex',gap:6,marginBottom:18,borderBottom:'1px solid var(--border)',paddingBottom:10}}>
+      {tabs.map(t=><button key={t.k}
+        onClick={()=>setTab(t.k)}
+        style={{padding:'6px 18px',borderRadius:20,border:'none',cursor:'pointer',fontSize:13,fontWeight:600,
+          background:tab===t.k?'var(--blue2)':'var(--bg3)',
+          color:tab===t.k?'#fff':'var(--text2)',
+          transition:'all .15s'}}>
+        {t.l}
+      </button>)}
+    </div>
+
+    {/* ── Tab: ภาพรวม ── */}
+    {tab==='overview'&&<div style={{display:'grid',gap:16}}>
+
+      {/* กราฟ: เคสต่อเซลส์ */}
+      <div className="card">
+        <div style={{fontWeight:700,marginBottom:16,fontSize:14}}>📋 เคสต่อเซลส์ (เดือนนี้)</div>
+        <div style={{height:220}}>
+          <BarChart
+            id="salesBar"
+            labels={salesList.map(s=>s.name)}
+            datasets={[
+              {label:'เคสปัจจุบัน',data:salesList.map(s=>s.currentCases||0),backgroundColor:'rgba(88,166,255,.8)'},
+              {label:'รับตลาด',    data:salesList.map(s=>s.claimedCases||0),backgroundColor:'rgba(188,140,255,.8)'},
+              {label:'ปล่อยแล้ว', data:salesList.map(s=>s.sold||0),        backgroundColor:'rgba(63,185,80,.85)'},
+            ]}
+          />
+        </div>
+      </div>
+
+      {/* กราฟ: สถานะรวม donut */}
+      {statusEntries.length>0&&<div className="card">
+        <div style={{fontWeight:700,marginBottom:16,fontSize:14}}>🏷 สัดส่วนสถานะทั้งระบบ</div>
+        <div style={{height:240}}>
+          <DonutChart
+            id="statusDonut"
+            labels={statusEntries.map(([k])=>k)}
+            values={statusEntries.map(([,v])=>v)}
+            colors={statusEntries.map(([k],i)=>STATUS_COLORS[k]||PALETTE[i%PALETTE.length])}
+          />
+        </div>
+      </div>}
+
+    </div>}
+
+    {/* ── Tab: รายเซลส์ ── */}
+    {tab==='sales'&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:14}}>
+      {salesList.map((s,i)=>{
+        const stEntries=Object.entries(s.statuses||{}).sort((a,b)=>b[1]-a[1]);
+        const maxSt=stEntries.reduce((m,[,v])=>v>m?v:m,1);
+        return <div key={i} className="card">
+          {/* Header */}
+          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
+            <div style={{width:46,height:46,borderRadius:'50%',background:'var(--bg3)',border:'2px solid var(--border)',flexShrink:0,overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              {s.avatar?<img src={s.avatar} style={{width:'100%',height:'100%',objectFit:'cover'}} onError={e=>e.target.style.display='none'}/>:<Ico.user/>}
             </div>
-          )}
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:15}}>{s.name}</div>
+              <div style={{fontSize:11,color:'var(--text2)'}}>Sales</div>
+            </div>
+          </div>
+          {/* Stats */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:14}}>
+            {[['เคส',s.currentCases||0,'var(--blue)'],['ตลาด',s.claimedCases||0,'var(--purple)'],['ปล่อย',s.sold||0,'var(--green)']].map(([l,v,c])=>
+              <div key={l} style={{textAlign:'center',background:'var(--bg3)',borderRadius:8,padding:'10px 4px'}}>
+                <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+                <div style={{fontSize:11,color:'var(--text2)'}}>{l}</div>
+              </div>
+            )}
+          </div>
+          {/* Mini status bars */}
+          {stEntries.length>0&&<div>
+            <div style={{fontSize:11,color:'var(--text3)',marginBottom:6,fontWeight:600}}>สถานะเคส</div>
+            {stEntries.slice(0,6).map(([st,cnt])=>
+              <div key={st} style={{display:'flex',alignItems:'center',gap:8,marginBottom:5}}>
+                <div style={{width:8,height:8,borderRadius:'50%',background:STATUS_COLORS[st]||'var(--text3)',flexShrink:0}}/>
+                <div style={{fontSize:12,flex:1,color:'var(--text2)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{st}</div>
+                <div style={{height:6,borderRadius:3,background:STATUS_COLORS[st]||'var(--blue)',width:`${Math.round(cnt/maxSt*100)}%`,maxWidth:80,minWidth:6}}/>
+                <div style={{fontSize:12,fontWeight:700,minWidth:18,textAlign:'right'}}>{cnt}</div>
+              </div>
+            )}
+          </div>}
+        </div>;
+      })}
+    </div>}
+
+    {/* ── Tab: สถานะ ── */}
+    {tab==='status'&&<div style={{display:'grid',gap:14}}>
+
+      {/* ตารางสถานะรวม */}
+      <div className="card">
+        <div style={{fontWeight:700,marginBottom:14,fontSize:14}}>📊 สรุปสถานะทั้งระบบ</div>
+        {statusEntries.map(([st,cnt],i)=>{
+          const pct=Math.round(cnt/(totalCases||1)*100);
+          return <div key={st} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+            <div style={{width:10,height:10,borderRadius:'50%',background:STATUS_COLORS[st]||PALETTE[i%PALETTE.length],flexShrink:0}}/>
+            <div style={{flex:1,fontSize:13}}><StatusBadge status={st}/></div>
+            <div style={{flex:2,height:8,background:'var(--bg3)',borderRadius:4,overflow:'hidden'}}>
+              <div style={{height:'100%',borderRadius:4,background:STATUS_COLORS[st]||PALETTE[i%PALETTE.length],width:`${pct}%`,transition:'width .4s'}}/>
+            </div>
+            <div style={{fontSize:13,fontWeight:700,minWidth:28,textAlign:'right'}}>{cnt}</div>
+            <div style={{fontSize:11,color:'var(--text3)',minWidth:36,textAlign:'right'}}>{pct}%</div>
+          </div>;
+        })}
+      </div>
+
+      {/* เคสต่อเซลส์ horizontal bar */}
+      <div className="card">
+        <div style={{fontWeight:700,marginBottom:16,fontSize:14}}>🏆 จำนวนเคสต่อเซลส์</div>
+        <div style={{height:Math.max(160,salesList.length*50)}}>
+          <BarChart
+            id="hBar"
+            horizontal={true}
+            labels={[...salesList].sort((a,b)=>(b.currentCases||0)-(a.currentCases||0)).map(s=>s.name)}
+            datasets={[{
+              label:'เคสปัจจุบัน',
+              data:[...salesList].sort((a,b)=>(b.currentCases||0)-(a.currentCases||0)).map(s=>s.currentCases||0),
+              backgroundColor:PALETTE.slice(0,salesList.length)
+            }]}
+          />
         </div>
-      </div>)}
-    </div>
+      </div>
+
+    </div>}
+
   </div>;
 }
+
 
 // ============================================================
 // ADMIN — BOOKINGS
