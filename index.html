@@ -153,6 +153,29 @@ tr.clickable{cursor:pointer;}
 const {useState,useEffect,useCallback,useRef,createContext,useContext} = React;
 
 // ============================================================
+// 🛡️ DOUBLE-SUBMIT PREVENTION HOOK
+// ============================================================
+function useSubmit(fn){
+  const submitting=useRef(false);
+  return useCallback(async(...args)=>{
+    if(submitting.current)return;
+    submitting.current=true;
+    try{ await fn(...args); }finally{ submitting.current=false; }
+  },[fn]);
+}
+
+// ============================================================
+// 💥 API ERROR FALLBACK HELPER
+// ============================================================
+function apiFallback(result, fallbackMsg){
+  if(!result||!result.success){
+    const msg = result?.error || fallbackMsg || 'เกิดข้อผิดพลาด กรุณาลองใหม่';
+    return {success:false, error:msg};
+  }
+  return result;
+}
+
+// ============================================================
 // ⚙️ CONFIG — ใส่ URL ของ Apps Script Web App ตรงนี้
 // ============================================================
 const API_URL = 'https://script.google.com/macros/s/AKfycbxHczRputv2j_iAbRGXXQ62gQVdYAsVldetYmZqo9EceB9uL_30l0H8j1T-eFz6GO__/exec';
@@ -640,6 +663,8 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
   const [report,setReport]=useState(caseData.report||'');
   const [editReport,setEditReport]=useState(false);
   const [loading,setLoading]=useState(false);
+  const [softLoading,setSoftLoading]=useState(false);
+  const [apiError,setApiError]=useState('');
   const [showHistory,setShowHistory]=useState(false);
   const [newSales,setNewSales]=useState(caseData.sales||caseData.sale||'');
   const [notes,setNotes]=useState([]);
@@ -673,40 +698,51 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
     try{localStorage.setItem('cnotes_'+caseId,JSON.stringify(upd));}catch(e){}
   }
 
-  async function save(){
+  const save=useSubmit(async()=>{
+    setApiError('');
     // Optimistic: ปิด modal ทันที ไม่รอ API
     const optimisticData = isClaimed
       ? {...caseData, newstatus:status}
       : {...caseData, status, report: editReport?report:caseData.report, sales: (isAdmin&&newSales)?newSales:caseData.sales};
-    onUpdated(optimisticData); // ส่ง optimistic data ให้ parent update list ทันที
+    onUpdated(optimisticData);
     onClose();
     // sync API ข้างหลัง (silent)
     try{
       if(isClaimed){
-        await api('updateClaimed',{caseId,newstatus:status,Notes:'',sales:currentUser.name});
+        const r=await api('updateClaimed',{caseId,newstatus:status,Notes:'',sales:currentUser.name});
+        if(!r.success) console.warn('updateClaimed failed:',r.error);
       } else {
         const upd={caseid:caseId,status,changedBy:currentUser.name,detail:'เปลี่ยนสถานะเป็น '+status};
         if(editReport) upd.report=report;
-        await api('updateCase',upd);
+        const r=await api('updateCase',upd);
+        if(!r.success) console.warn('updateCase failed:',r.error);
         if(isAdmin&&newSales&&newSales!==caseData.sales){
           await api('adminChangeSales',{caseId,newSales});
         }
       }
-    }catch(e){/* silent */}
-  }
+    }catch(e){ console.warn('save error',e); }
+  });
 
-  async function saveReport(){
+  const saveReport=useSubmit(async()=>{
     if(!report.trim())return;
+    setApiError('');
     setEditReport(false);
     onUpdated({...caseData, report}); // optimistic
     onClose();
-    try{await api('updateCase',{caseid:caseId,report,changedBy:currentUser.name,detail:'แก้ไขรีพอร์ต'});}catch(e){}
-  }
+    try{
+      const r=await api('updateCase',{caseid:caseId,report,changedBy:currentUser.name,detail:'แก้ไขรีพอร์ต'});
+      if(!r.success) console.warn('saveReport failed:',r.error);
+    }catch(e){}
+  });
 
-  async function doDelete(){
+  const doDelete=useSubmit(async()=>{
+    setApiError('');
     onUpdated(); onClose(); // optimistic: ปิดทันที
-    try{await api('sendToMarket',{caseId,sales:caseData.sales||currentUser.name});}catch(e){}
-  }
+    try{
+      const r=await api('sendToMarket',{caseId,sales:caseData.sales||currentUser.name});
+      if(!r.success) console.warn('sendToMarket failed:',r.error);
+    }catch(e){}
+  });
 
   if(showHistory) return <HistoryModal caseId={caseId} onClose={()=>setShowHistory(false)}/>;
 
@@ -827,6 +863,9 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
 
         {/* Footer */}
         <div style={{padding:'10px 16px',borderTop:'1px solid var(--border)'}}>
+          {apiError&&<div style={{background:'rgba(248,81,73,.1)',border:'1px solid var(--red)',color:'var(--red)',fontSize:12,padding:'6px 12px',borderRadius:6,marginBottom:8,display:'flex',alignItems:'center',gap:6}}>
+            ⚠️ {apiError}
+          </div>}
           <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap'}}>
             {!isClaimed&&<button className="btn btn-primary" style={{flex:1,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:5}} onClick={editReport?saveReport:()=>setEditReport(true)}>
               ✏️ {editReport?'บันทึกรีพอร์ต':'แก้ไขรีพอร์ต'}
@@ -1008,14 +1047,17 @@ function AddCaseModal({users,currentUser,onClose,onAdded}){
   async function submit(){
     if(!form.customername||!form.sales) return alert('กรุณากรอกชื่อลูกค้าและเลือกเซลส์');
     setLoading(true);
-    const r=await api('addCase',{...form});
+    try{
+      const r=await api('addCase',{...form});
+      if(r.success){onAdded();onClose();}
+      else alert(r.error||'เกิดข้อผิดพลาด กรุณาลองใหม่');
+    }catch(e){ alert('เกิดข้อผิดพลาด: '+e); }
     setLoading(false);
-    if(r.success){onAdded();onClose();}
-    else alert(r.error||'เกิดข้อผิดพลาด');
   }
+  const handleSubmit=useSubmit(submit);
   return <Modal title="➕ เพิ่มข้อมูลลูกค้า" onClose={onClose} footer={<>
-    <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
-    <button className="btn btn-primary" onClick={submit} disabled={loading}>{loading?'กำลังบันทึก...':'บันทึก'}</button>
+    <button className="btn btn-ghost" onClick={onClose} disabled={loading}>ยกเลิก</button>
+    <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading?'กำลังบันทึก...':'บันทึก'}</button>
   </>}>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
       <div className="form-group" style={{gridColumn:'1/-1'}}>
@@ -1052,13 +1094,17 @@ function AddBookingModal({currentUser,users,onClose,onAdded}){
   async function submit(){
     if(!form.caseId||!form.customer) return alert('กรุณากรอกรหัสเคสและชื่อลูกค้า');
     setLoading(true);
-    const r=await api('addBooking',{...form});
+    try{
+      const r=await api('addBooking',{...form});
+      if(r.success){onAdded();onClose();}
+      else alert(r.error||'เกิดข้อผิดพลาด กรุณาลองใหม่');
+    }catch(e){ alert('เกิดข้อผิดพลาด: '+e); }
     setLoading(false);
-    if(r.success){onAdded();onClose();}else alert(r.error);
   }
+  const handleSubmit=useSubmit(submit);
   return <Modal title="📋 เพิ่มการจอง" onClose={onClose} footer={<>
-    <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
-    <button className="btn btn-primary" onClick={submit} disabled={loading}>{loading?'บันทึก...':'บันทึก'}</button>
+    <button className="btn btn-ghost" onClick={onClose} disabled={loading}>ยกเลิก</button>
+    <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>{loading?'บันทึก...':'บันทึก'}</button>
   </>}>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
       <div className="form-group"><label>รหัสเคส *</label><input value={form.caseId} onChange={e=>set('caseId',e.target.value)} placeholder="เช่น 2603001"/></div>
@@ -1119,15 +1165,21 @@ function NotifPanel({user,onClose,onCountChange}){
 function AdminCurrentCases({currentUser,users}){
   const [cases,setCases]=useState([]);
   const [loading,setLoading]=useState(true);
+  const [softLoading,setSoftLoading]=useState(false);
   const [filter,setFilter]=useState({sales:'all',status:'',q:''});
   const [sortDir,setSortDir]=useState('desc'); // desc=ใหม่สุดก่อน, asc=เก่าสุดก่อน
   const [sel,setSel]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [showAddBook,setShowAddBook]=useState(false);
 
-  const load=useCallback(()=>{
-    setLoading(true);
-    api('getCases',{}).then(r=>{if(r.success)setCases(r.data||[]);setLoading(false);});
+  const load=useCallback((silent=false)=>{
+    if(!silent) setLoading(true);
+    else setSoftLoading(true);
+    api('getCases',{}).then(r=>{
+      if(r.success)setCases(r.data||[]);
+      setLoading(false);
+      setSoftLoading(false);
+    }).catch(()=>{setLoading(false);setSoftLoading(false);});
   },[]);
   useEffect(()=>{load();},[load]);
 
@@ -1152,7 +1204,13 @@ function AdminCurrentCases({currentUser,users}){
 
   return <div className="page">
     <div className="page-hd">
-      <div><div className="page-title">📋 เคสปัจจุบัน</div><div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>เดือนนี้ทั้งหมด {filtered.length} เคส</div></div>
+      <div>
+        <div className="page-title">📋 เคสปัจจุบัน</div>
+        <div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>
+          เดือนนี้ทั้งหมด {filtered.length} เคส
+          {softLoading&&<span style={{marginLeft:8,color:'var(--text3)',display:'inline-flex',alignItems:'center',gap:4}}><span className="spin" style={{width:10,height:10,borderWidth:2}}/> กำลังอัปเดต...</span>}
+        </div>
+      </div>
       <div style={{display:'flex',gap:8}}>
         <button className="btn btn-ghost" onClick={()=>setShowAddBook(true)}>📋 เพิ่มจอง</button>
         <button className="btn btn-primary" onClick={()=>setShowAdd(true)}><Ico.plus/> เพิ่มลูกค้า</button>
@@ -1171,7 +1229,7 @@ function AdminCurrentCases({currentUser,users}){
         <option value="">ทุกสถานะ</option>
         {STATUSES.map(s=><option key={s}>{s}</option>)}
       </select>
-      <button className="btn btn-ghost" onClick={load}>🔄</button>
+      <button className="btn btn-ghost" onClick={()=>load(false)}>🔄</button>
     </div>
     <div className="card" style={{padding:0}}>
       <div className="table-wrap">
@@ -1196,8 +1254,8 @@ function AdminCurrentCases({currentUser,users}){
         </table>
       </div>
     </div>
-    {sel&&<CaseModal caseData={sel} users={users} currentUser={currentUser} onClose={()=>setSel(null)} onUpdated={load}/>}
-    {showAdd&&<AddCaseModal users={users} currentUser={currentUser} onClose={()=>setShowAdd(false)} onAdded={load}/>}
+    {sel&&<CaseModal caseData={sel} users={users} currentUser={currentUser} onClose={()=>setSel(null)} onUpdated={()=>load(true)}/>}
+    {showAdd&&<AddCaseModal users={users} currentUser={currentUser} onClose={()=>setShowAdd(false)} onAdded={()=>load(false)}/>}
     {showAddBook&&<AddBookingModal currentUser={currentUser} users={users} onClose={()=>setShowAddBook(false)} onAdded={()=>{}}/>}
   </div>;
 }
@@ -1209,12 +1267,15 @@ function AdminMarket({currentUser,users}){
   const [cases,setCases]=useState([]);
   const [allCases,setAllCases]=useState([]);
   const [loading,setLoading]=useState(true);
+  const [softLoading,setSoftLoading]=useState(false);
   const [confirm,setConfirm]=useState(null);
   const [dashboard,setDashboard]=useState(null);
   const [filterSales,setFilterSales]=useState('all');
+  const [pendingClose,setPendingClose]=useState(new Set());
 
-  const load=useCallback(()=>{
-    setLoading(true);
+  const load=useCallback((silent=false)=>{
+    if(!silent) setLoading(true);
+    else setSoftLoading(true);
     Promise.all([
       api('getMarket',{}),
       api('getDashboard',{role:'Admin'})
@@ -1222,13 +1283,20 @@ function AdminMarket({currentUser,users}){
       if(mr.success){setCases(mr.data||[]);setAllCases(mr.data||[]);}
       if(dr.success)setDashboard(dr.data);
       setLoading(false);
-    });
+      setSoftLoading(false);
+    }).catch(()=>{setLoading(false);setSoftLoading(false);});
   },[]);
   useEffect(()=>{load();},[load]);
 
   async function closeCase(caseId){
-    await api('closeMarketCase',{caseId,closedBy:currentUser.name});
-    load();
+    if(pendingClose.has(caseId)) return;
+    setPendingClose(prev=>new Set([...prev,caseId]));
+    try{
+      const r=await api('closeMarketCase',{caseId,closedBy:currentUser.name});
+      if(r.success) load(true);
+      else alert(r.error||'ปิดเคสไม่สำเร็จ');
+    }catch(e){ alert('เกิดข้อผิดพลาด'); }
+    finally{ setPendingClose(prev=>{const s=new Set(prev);s.delete(caseId);return s;}); }
   }
 
   const filtered=filterSales==='all'?cases:cases.filter(c=>c.old_sales===filterSales);
@@ -1261,7 +1329,9 @@ function AdminMarket({currentUser,users}){
             <option value="all">ทุกเซลส์</option>
             {salesList.map(u=><option key={u.userId} value={u.name}>{u.name}</option>)}
           </select>
-          <button className="btn btn-ghost" onClick={load} style={{fontSize:13}}>🔄 รีเฟรช</button>
+          <button className="btn btn-ghost" onClick={()=>load(false)} style={{fontSize:13}}>
+            {softLoading?<><span className="spin" style={{width:12,height:12,borderWidth:2,display:'inline-block',marginRight:4}}/> อัปเดต...</>:'🔄 รีเฟรช'}
+          </button>
         </div>
       </div>
       <div className="mk-stats">
@@ -1296,7 +1366,12 @@ function AdminMarket({currentUser,users}){
                 {c.contact&&<button className="btn-ghost" style={{border:'none',background:'none',color:'var(--blue)',cursor:'pointer',fontSize:11}} onClick={()=>navigator.clipboard&&navigator.clipboard.writeText(c.contact)}>คัดลอก</button>}
               </div>
               {c.report&&<div className="mkc-report">{String(c.report).slice(0,120)}{c.report.length>120?'...':''}</div>}
-              <button className="btn btn-danger" style={{width:'100%',padding:'9px',fontSize:13}} onClick={()=>setConfirm(c.ID)}>🗑 ปิดเคส</button>
+              <button className="btn btn-danger"
+                style={{width:'100%',padding:'9px',fontSize:13,opacity:pendingClose.has(c.ID)?0.5:1}}
+                disabled={pendingClose.has(c.ID)}
+                onClick={()=>setConfirm(c.ID)}>
+                {pendingClose.has(c.ID)?'⏳ กำลังปิด...':'🗑 ปิดเคส'}
+              </button>
             </div>)}
           </div>
         </>}
@@ -1785,19 +1860,26 @@ function BookingDetailModal({booking,onClose,onUpdated}){
   const [status,setStatus]=useState(booking['สถานะ']||'จองแล้ว');
   const [note,setNote]=useState(booking['หมายเหตุ']||'');
   const [loading,setLoading]=useState(false);
+  const [saveError,setSaveError]=useState('');
   async function save(){
+    setSaveError('');
     setLoading(true);
-    await api('updateBooking',{caseId:booking.CaseID,status,note});
+    try{
+      const r=await api('updateBooking',{caseId:booking.CaseID,status,note});
+      if(r.success){onUpdated();onClose();}
+      else setSaveError(r.error||'เกิดข้อผิดพลาด กรุณาลองใหม่');
+    }catch(e){ setSaveError('เกิดข้อผิดพลาด: '+e); }
     setLoading(false);
-    onUpdated();onClose();
   }
+  const handleSave=useSubmit(save);
   return <Modal title={`จอง — ${booking.CaseID}`} onClose={onClose} footer={<>
-    <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
-    <button className="btn btn-primary" onClick={save} disabled={loading}>{loading?'บันทึก...':'💾 บันทึก'}</button>
+    <button className="btn btn-ghost" onClick={onClose} disabled={loading}>ยกเลิก</button>
+    <button className="btn btn-primary" onClick={handleSave} disabled={loading}>{loading?'บันทึก...':'💾 บันทึก'}</button>
   </>}>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
       {[['ลูกค้า',booking['ลูกค้า']],['เซลส์',booking['เซลส์']],['ยี่ห้อ',booking['รถ']],['รุ่น',booking['รุ่น']],['ทะเบียน',booking['ทะเบียน']],['Facebook',booking.Facebook]].map(([l,v])=>v?<div key={l}><div style={{fontSize:11,color:'var(--text2)',marginBottom:3}}>{l}</div><div style={{fontWeight:500}}>{v}</div></div>:null)}
     </div>
+    {saveError&&<div style={{background:'rgba(248,81,73,.1)',border:'1px solid var(--red)',color:'var(--red)',fontSize:12,padding:'6px 12px',borderRadius:6,marginBottom:10}}>⚠️ {saveError}</div>}
     <div className="form-group"><label>สถานะ</label><select value={status} onChange={e=>setStatus(e.target.value)}>{BOOK_STATUSES.map(s=><option key={s}>{s}</option>)}</select></div>
     <div className="form-group"><label>หมายเหตุ</label><textarea rows={2} value={note} onChange={e=>setNote(e.target.value)}/></div>
   </Modal>;
@@ -1809,9 +1891,11 @@ function BookingDetailModal({booking,onClose,onUpdated}){
 function SalesMarket({currentUser}){
   const [cases,setCases]=useState([]);
   const [claimedCases,setClaimedCases]=useState([]);
-  const [loading,setLoading]=useState(true);
+  const [loading,setLoading]=useState(true);       // โหลดครั้งแรก
+  const [softLoading,setSoftLoading]=useState(false); // รีเฟรช realtime
   const [claimedIds,setClaimedIds]=useState(new Set()); // optimistic track
   const [skippedIds,setSkippedIds]=useState(new Set()); // optimistic track
+  const [pendingIds,setPendingIds]=useState(new Set()); // double-submit guard
   const [toast,setToast]=useState(null); // {msg, type:'ok'|'err'}
   const [leaderboard,setLeaderboard]=useState([]);
 
@@ -1822,6 +1906,7 @@ function SalesMarket({currentUser}){
 
   const load=useCallback((silent=false)=>{
     if(!silent) setLoading(true);
+    else setSoftLoading(true);
     Promise.all([
       api('getMarket',{sales:currentUser.name}),
       api('getClaimedCases',{sales:currentUser.name}),
@@ -1831,38 +1916,58 @@ function SalesMarket({currentUser}){
       if(cr.success) setClaimedCases(cr.data||[]);
       if(dr.success) setLeaderboard(dr.data?.sales||[]);
       setLoading(false);
+      setSoftLoading(false);
       // sync: clear optimistic sets after real data arrives
       setClaimedIds(new Set());
       setSkippedIds(new Set());
+      setPendingIds(new Set());
+    }).catch(()=>{
+      setLoading(false);
+      setSoftLoading(false);
     });
   },[currentUser.name]);
   useEffect(()=>{load();},[load]);
 
   async function claim(caseId){
+    if(pendingIds.has(caseId)) return; // double-submit guard
+    setPendingIds(prev=>new Set([...prev, caseId]));
     // Optimistic: ซ่อนการ์ดทันที + แสดง toast ทันที
     setClaimedIds(prev=>new Set([...prev, caseId]));
     setClaimedCases(prev=>[...prev,{caseID:caseId,sale:currentUser.name}]);
     showToast('✅ รับเคส '+caseId+' สำเร็จ! ดูได้ที่ "รับจากตลาด"','ok');
-
     // sync API ข้างหลัง
-    const r=await api('claimCase',{caseId,sales:currentUser.name});
-    if(!r.success){
-      // rollback ถ้า error
+    try{
+      const r=await api('claimCase',{caseId,sales:currentUser.name});
+      if(!r.success){
+        // rollback ถ้า error
+        setClaimedIds(prev=>{const s=new Set(prev);s.delete(caseId);return s;});
+        setClaimedCases(prev=>prev.filter(c=>c.caseID!==caseId));
+        showToast('❌ '+(r.error||'รับเคสไม่สำเร็จ ลองใหม่'),'err');
+      } else {
+        // silent reload เพื่อ sync ข้อมูลจริง (ไม่กระตุก)
+        setTimeout(()=>load(true), 2000);
+      }
+    }catch(e){
       setClaimedIds(prev=>{const s=new Set(prev);s.delete(caseId);return s;});
       setClaimedCases(prev=>prev.filter(c=>c.caseID!==caseId));
-      showToast('❌ '+(r.error||'รับเคสไม่สำเร็จ ลองใหม่'),'err');
-    } else {
-      // silent reload เพื่อ sync ข้อมูลจริง (ไม่กระตุก)
-      setTimeout(()=>load(true), 2000);
+      showToast('❌ เชื่อมต่อ API ไม่ได้ กรุณาตรวจสอบอินเตอร์เน็ต','err');
+    } finally {
+      setPendingIds(prev=>{const s=new Set(prev);s.delete(caseId);return s;});
     }
   }
 
   async function notInterested(caseId){
+    if(pendingIds.has(caseId)) return; // double-submit guard
+    setPendingIds(prev=>new Set([...prev, caseId]));
     // Optimistic: ซ่อนการ์ดทันที
     setSkippedIds(prev=>new Set([...prev, caseId]));
-    // sync API ข้างหลัง
-    await api('returnCase',{caseId,sales:'_skip_'+currentUser.name});
-    setTimeout(()=>load(true), 1000);
+    try{
+      await api('returnCase',{caseId,sales:'_skip_'+currentUser.name});
+      setTimeout(()=>load(true), 1000);
+    }catch(e){}
+    finally{
+      setPendingIds(prev=>{const s=new Set(prev);s.delete(caseId);return s;});
+    }
   }
 
   function getDateBadge(c){
@@ -1902,6 +2007,9 @@ function SalesMarket({currentUser}){
           <div key={l} className="mk-stat"><div className="mk-stat-num" style={{color:c}}>{v}</div><div className="mk-stat-lbl">{l}</div></div>
         )}
       </div>
+      {softLoading&&<div style={{fontSize:12,color:'var(--text2)',paddingBottom:8,display:'flex',alignItems:'center',gap:6}}>
+        <span className="spin" style={{width:12,height:12,borderWidth:2}}/>🔄 กำลังอัปเดต...
+      </div>}
     </div>
 
     <div className="mk-body">
@@ -1942,22 +2050,27 @@ function SalesMarket({currentUser}){
               </div>
               {c.report&&<div className="mkc-report">{String(c.report).slice(0,130)}{c.report.length>130?'...':''}</div>}
               <div className="mkc-actions">
-                <button className="btn-claim" onClick={()=>claim(c.ID)}>
-                  รับเคสนี้ →
+                <button className="btn-claim"
+                  onClick={()=>claim(c.ID)}
+                  disabled={pendingIds.has(c.ID)}
+                  style={pendingIds.has(c.ID)?{opacity:.5,cursor:'not-allowed'}:{}}>
+                  {pendingIds.has(c.ID)?'⏳ กำลังรับ...':'รับเคสนี้ →'}
                 </button>
                 <button
                   onClick={()=>notInterested(c.ID)}
+                  disabled={pendingIds.has(c.ID)}
                   title="ไม่สนใจ / ข้ามเคสนี้"
                   style={{
                     background:'rgba(248,81,73,.12)',
                     color:'var(--red)',
                     border:'1px solid rgba(248,81,73,.3)',
                     borderRadius:8,padding:'10px 14px',
-                    fontSize:15,cursor:'pointer',
+                    fontSize:15,cursor:pendingIds.has(c.ID)?'not-allowed':'pointer',
                     transition:'all .15s',fontWeight:700,
-                    lineHeight:1
+                    lineHeight:1,
+                    opacity:pendingIds.has(c.ID)?0.5:1
                   }}
-                  onMouseOver={e=>e.currentTarget.style.background='rgba(248,81,73,.25)'}
+                  onMouseOver={e=>{if(!pendingIds.has(c.ID))e.currentTarget.style.background='rgba(248,81,73,.25)';}}
                   onMouseOut={e=>e.currentTarget.style.background='rgba(248,81,73,.12)'}
                 >✕</button>
               </div>
@@ -2004,21 +2117,25 @@ function SalesMarket({currentUser}){
 // ============================================================
 function SalesCurrentCases({currentUser,users}){
   const [cases,setCases]=useState([]);
-  const [loading,setLoading]=useState(true);
+  const [loading,setLoading]=useState(true);       // โหลดครั้งแรก
+  const [softLoading,setSoftLoading]=useState(false); // รีเฟรช realtime
   const [sel,setSel]=useState(null);
   const [q,setQ]=useState('');
   const [sortDir,setSortDir]=useState('desc'); // desc=ใหม่ก่อน, asc=เก่าก่อน
   const [filterStatus,setFilterStatus]=useState('');
   const [showClosed,setShowClosed]=useState(false);
+  const [pendingMarket,setPendingMarket]=useState(new Set()); // double-submit guard
 
   const CLOSED_STATUSES=['ปิดเคส','รีเจค','ได้รถจากที่อื่น','โยนเคส','ปล่อยแล้ว'];
 
-  const load=useCallback(()=>{
-    setLoading(true);
+  const load=useCallback((silent=false)=>{
+    if(!silent) setLoading(true);
+    else setSoftLoading(true);
     api('getCases',{sales:currentUser.name,all:'true'}).then(r=>{
       if(r.success) setCases(r.data||[]);
       setLoading(false);
-    });
+      setSoftLoading(false);
+    }).catch(()=>{setLoading(false);setSoftLoading(false);});
   },[currentUser.name]);
   useEffect(()=>{load();},[load]);
 
@@ -2072,9 +2189,10 @@ function SalesCurrentCases({currentUser,users}){
         <div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>
           กำลังดูแล <span style={{color:'var(--blue)',fontWeight:700}}>{activeCount}</span> เคส
           {closedCount>0&&<span style={{marginLeft:8,color:'var(--text3)'}}>· ปิดแล้ว {closedCount}</span>}
+          {softLoading&&<span style={{marginLeft:8,color:'var(--text3)',display:'inline-flex',alignItems:'center',gap:4}}><span className="spin" style={{width:10,height:10,borderWidth:2}}/> กำลังอัปเดต...</span>}
         </div>
       </div>
-      <button className="btn btn-ghost" onClick={load} style={{padding:'6px 10px'}}>🔄</button>
+      <button className="btn btn-ghost" onClick={()=>load(false)} style={{padding:'6px 10px'}}>🔄</button>
     </div>
 
     {/* Search bar */}
@@ -2143,9 +2261,23 @@ function SalesCurrentCases({currentUser,users}){
         {c.report&&<div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'6px 10px',borderRadius:6,marginTop:4,lineHeight:1.5}}>{String(c.report).slice(0,100)}{String(c.report).length>100?'...':''}</div>}
         <div style={{marginTop:10,display:'flex',gap:6}}>
           {!CLOSED_STATUSES.includes(c.status)&&
-            <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--yellow)'}}
-              onClick={e=>{e.stopPropagation();if(window.confirm('ส่งเคส '+c.caseid+' ขึ้นตลาด?'))api('sendToMarket',{caseId:c.caseid,sales:currentUser.name}).then(()=>load());}}>
-              ⬆ ส่งตลาด
+            <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--yellow)',opacity:pendingMarket.has(c.caseid)?0.5:1}}
+              disabled={pendingMarket.has(c.caseid)}
+              onClick={e=>{
+                e.stopPropagation();
+                if(pendingMarket.has(c.caseid))return;
+                if(window.confirm('ส่งเคส '+c.caseid+' ขึ้นตลาด?')){
+                  setPendingMarket(prev=>new Set([...prev,c.caseid]));
+                  api('sendToMarket',{caseId:c.caseid,sales:currentUser.name})
+                    .then(r=>{
+                      setPendingMarket(prev=>{const s=new Set(prev);s.delete(c.caseid);return s;});
+                      if(r.success) load(true);
+                      else alert(r.error||'ส่งตลาดไม่สำเร็จ');
+                    })
+                    .catch(()=>{ setPendingMarket(prev=>{const s=new Set(prev);s.delete(c.caseid);return s;}); });
+                }
+              }}>
+              {pendingMarket.has(c.caseid)?'⏳ กำลังส่ง...':'⬆ ส่งตลาด'}
             </button>
           }
         </div>
@@ -2161,19 +2293,41 @@ function SalesCurrentCases({currentUser,users}){
 function SalesClaimedCases({currentUser,users}){
   const [cases,setCases]=useState([]);
   const [loading,setLoading]=useState(true);
+  const [softLoading,setSoftLoading]=useState(false);
   const [sel,setSel]=useState(null);
   const [confirm,setConfirm]=useState(null);
+  const [pendingReturn,setPendingReturn]=useState(new Set());
 
-  const load=useCallback(()=>{setLoading(true);api('getClaimedCases',{sales:currentUser.name}).then(r=>{if(r.success)setCases(r.data||[]);setLoading(false);});},[currentUser.name]);
+  const load=useCallback((silent=false)=>{
+    if(!silent) setLoading(true);
+    else setSoftLoading(true);
+    api('getClaimedCases',{sales:currentUser.name}).then(r=>{
+      if(r.success)setCases(r.data||[]);
+      setLoading(false);
+      setSoftLoading(false);
+    }).catch(()=>{setLoading(false);setSoftLoading(false);});
+  },[currentUser.name]);
   useEffect(()=>{load();},[load]);
 
   async function returnCase(caseId){
-    await api('returnCase',{caseId,sales:currentUser.name});
-    load();
+    if(pendingReturn.has(caseId)) return;
+    setPendingReturn(prev=>new Set([...prev,caseId]));
+    try{
+      const r=await api('returnCase',{caseId,sales:currentUser.name});
+      if(r.success) load(true);
+      else alert(r.error||'คืนเคสไม่สำเร็จ');
+    }catch(e){ alert('เกิดข้อผิดพลาด'); }
+    finally{ setPendingReturn(prev=>{const s=new Set(prev);s.delete(caseId);return s;}); }
   }
 
   return <div className="page">
-    <div className="page-hd"><div className="page-title">📥 เคสที่รับจากตลาด</div><button className="btn btn-ghost" onClick={load}>🔄</button></div>
+    <div className="page-hd">
+      <div>
+        <div className="page-title">📥 เคสที่รับจากตลาด</div>
+        {softLoading&&<div style={{fontSize:11,color:'var(--text3)',display:'flex',alignItems:'center',gap:4,marginTop:2}}><span className="spin" style={{width:10,height:10,borderWidth:2}}/> กำลังอัปเดต...</div>}
+      </div>
+      <button className="btn btn-ghost" onClick={()=>load(false)}>🔄</button>
+    </div>
     {loading?<SkeletonCards n={3}/>:cases.length===0?<div style={{textAlign:'center',padding:40,color:'var(--text2)'}}>ยังไม่มีเคสที่รับจากตลาด</div>:
     cases.map((c,i)=><div key={i} className="market-card" onClick={()=>setSel(c)} style={{cursor:'pointer'}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
@@ -2189,10 +2343,15 @@ function SalesClaimedCases({currentUser,users}){
         <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px',color:'var(--green)'}} onClick={e=>{e.stopPropagation();navigator.clipboard&&navigator.clipboard.writeText(formatContact(c.contact)||'');}}>
           <Ico.copy/> {formatContact(c.contact)||'ไม่มีเบอร์'}
         </button>
-        <button className="btn btn-danger" style={{fontSize:12,padding:'4px 10px',marginLeft:'auto'}} onClick={e=>{e.stopPropagation();setConfirm(c.caseID);}}>↩ คืนเคส</button>
+        <button className="btn btn-danger"
+          style={{fontSize:12,padding:'4px 10px',marginLeft:'auto',opacity:pendingReturn.has(c.caseID)?0.5:1}}
+          disabled={pendingReturn.has(c.caseID)}
+          onClick={e=>{e.stopPropagation();setConfirm(c.caseID);}}>
+          {pendingReturn.has(c.caseID)?'⏳ กำลังคืน...':'↩ คืนเคส'}
+        </button>
       </div>
     </div>)}
-    {sel&&<CaseModal caseData={{...sel,caseid:sel.caseID}} users={users} currentUser={currentUser} onClose={()=>setSel(null)} onUpdated={load}/>}
+    {sel&&<CaseModal caseData={{...sel,caseid:sel.caseID}} users={users} currentUser={currentUser} onClose={()=>setSel(null)} onUpdated={()=>load(true)}/>}
     {confirm&&<Confirm msg={`คืนเคส ${confirm} กลับตลาด?`} onOk={()=>{returnCase(confirm);setConfirm(null);}} onCancel={()=>setConfirm(null)}/>}
   </div>;
 }
