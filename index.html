@@ -470,11 +470,17 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
           <div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>รหัสเคส</div><div style={{fontWeight:700,color:'var(--blue)'}}>{caseId}</div></div>
           <div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>ชื่อลูกค้า</div><div style={{fontWeight:600}}>{caseData.customername||caseData.name||'-'}</div></div>
-          <div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>ติดต่อ</div>
-            <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <span style={{fontWeight:600,color:'var(--green)',filter:isClaimed?'blur(0)':'blur(4px)'}}>{caseData.contact||'-'}</span>
-              {isClaimed&&<button className="btn btn-ghost" style={{padding:'2px 6px',fontSize:12}} onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(caseData.contact);}}><Ico.copy/></button>}
-            </div>
+          <div style={{gridColumn:'1/-1'}}><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>ติดต่อ / QR</div>
+            {(caseData.contact||'').startsWith('http')||(caseData.contact||'').startsWith('data:image')?
+              <div>
+                {isClaimed?<img src={caseData.contact} alt="QR" style={{maxWidth:'100%',maxHeight:180,borderRadius:8,border:'1px solid var(--border)'}}/>:
+                <div style={{background:'var(--bg3)',padding:8,borderRadius:8,textAlign:'center',color:'var(--text2)',fontSize:12}}>🔒 รับเคสก่อนเพื่อดู QR Code</div>}
+              </div>:
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{fontWeight:600,color:'var(--green)',filter:isClaimed?'blur(0)':'blur(4px)'}}>{caseData.contact||'-'}</span>
+                {isClaimed&&<button className="btn btn-ghost" style={{padding:'2px 6px',fontSize:12}} onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(caseData.contact);}}><Ico.copy/></button>}
+              </div>
+            }
           </div>
           <div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>เซลส์</div><div style={{fontWeight:600,color:'var(--purple)'}}>{caseData.sales||caseData.sale||'-'}</div></div>
           {isClaimed&&<div><div style={{fontSize:11,color:'var(--text2)',marginBottom:4}}>รับมาจาก</div><div style={{fontWeight:600,color:'var(--orange)'}}>{caseData.fromsales||'-'}</div></div>}
@@ -507,6 +513,75 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
       </>}
     </Modal>
   </>;
+}
+
+// ============================================================
+// QR UPLOADER COMPONENT
+// ============================================================
+function QrUploader({value,onChange}){
+  const [uploading,setUploading]=useState(false);
+  const [preview,setPreview]=useState(value||'');
+  const fileRef=React.useRef();
+
+  async function handleFile(e){
+    const file=e.target.files[0];
+    if(!file) return;
+    if(!file.type.startsWith('image/')) return alert('กรุณาเลือกไฟล์รูปภาพเท่านั้น');
+    if(file.size>5*1024*1024) return alert('ไฟล์ต้องไม่เกิน 5MB');
+    setUploading(true);
+    try {
+      const reader=new FileReader();
+      reader.onload=async(ev)=>{
+        const base64=ev.target.result;
+        setPreview(base64); // show preview immediately
+        if(API_URL){
+          const r=await api('uploadImage',{base64,mimeType:file.type,filename:file.name});
+          if(r.success){
+            onChange(r.url);
+            setPreview(r.url);
+          } else {
+            // Fallback: store base64 directly (for demo/testing)
+            onChange(base64);
+            alert('อัปโหลดไปยัง Drive ไม่สำเร็จ เก็บเป็น base64 แทน: '+r.error);
+          }
+        } else {
+          // Demo mode: store base64
+          onChange(base64);
+        }
+        setUploading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch(err){
+      setUploading(false);
+      alert('เกิดข้อผิดพลาด: '+err);
+    }
+  }
+
+  function handlePaste(e){
+    const items=e.clipboardData?.items||[];
+    for(const item of items){
+      if(item.type.startsWith('image/')){
+        const file=item.getAsFile();
+        if(file) handleFile({target:{files:[file]}});
+      }
+    }
+  }
+
+  return <div onPaste={handlePaste}>
+    <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleFile} capture="environment"/>
+    {preview?
+      <div style={{position:'relative',display:'inline-block',width:'100%'}}>
+        <img src={preview} alt="QR Code" style={{width:'100%',maxHeight:200,objectFit:'contain',borderRadius:8,border:'1px solid var(--border)',background:'var(--bg3)'}}/>
+        <button onClick={()=>{setPreview('');onChange('');}} style={{position:'absolute',top:6,right:6,background:'rgba(0,0,0,.6)',border:'none',borderRadius:'50%',width:24,height:24,color:'#fff',cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+      </div>:
+      <div style={{display:'flex',gap:8,flexDirection:'column'}}>
+        <button type="button" className="btn btn-ghost" style={{width:'100%',padding:'14px',display:'flex',flexDirection:'column',alignItems:'center',gap:6,border:'2px dashed var(--border)',borderRadius:8}} onClick={()=>fileRef.current.click()} disabled={uploading}>
+          {uploading?<><span className="spin" style={{width:20,height:20,marginRight:0}}/><span style={{fontSize:13}}>กำลังอัปโหลด...</span></>:<><span style={{fontSize:28}}>📷</span><span style={{fontSize:13}}>แตะเพื่อถ่ายรูป / เลือกรูป QR Code</span><span style={{fontSize:11,color:'var(--text3)'}}>รองรับ JPG, PNG ไม่เกิน 5MB</span></>}
+        </button>
+        <input value={value||''} onChange={e=>onChange(e.target.value)} placeholder="หรือวาง URL รูปภาพ / ไอดีไลน์" style={{fontSize:13}}/>
+      </div>
+    }
+  </div>;
 }
 
 // ============================================================
@@ -555,7 +630,13 @@ function AddCaseModal({users,currentUser,onClose,onAdded}){
       </div>
       <div className="form-group" style={{gridColumn:'1/-1'}}><label>ชื่อลูกค้า *</label><input value={form.customername} onChange={e=>set('customername',e.target.value)} placeholder="ชื่อ-นามสกุล"/></div>
       <div className="form-group"><label>ติดต่อโดย</label><select value={form.contact_by} onChange={e=>set('contact_by',e.target.value)}>{CONTACT_BY.map(c=><option key={c}>{c}</option>)}</select></div>
-      <div className="form-group"><label>ข้อมูลติดต่อ</label><input value={form.contact} onChange={e=>set('contact',e.target.value)} placeholder="เบอร์ / ไลน์ / ID"/></div>
+      <div className="form-group">
+        <label>ข้อมูลติดต่อ</label>
+        {form.contact_by==='QR Code'?
+          <QrUploader value={form.contact} onChange={v=>set('contact',v)}/>:
+          <input value={form.contact} onChange={e=>set('contact',e.target.value)} placeholder="เบอร์ / ไลน์ / ID"/>
+        }
+      </div>
       <div className="form-group"><label>สถานะ</label><select value={form.status} onChange={e=>set('status',e.target.value)}>{STATUSES.map(s=><option key={s}>{s}</option>)}</select></div>
       <div className="form-group"><label>ส่ง</label><select value={form.sent} onChange={e=>set('sent',e.target.value)}>{SENT_TYPES.map(s=><option key={s}>{s}</option>)}</select></div>
       {currentUser.role==='Admin'&&<div className="form-group" style={{gridColumn:'1/-1'}}><label>เซลส์ *</label><select value={form.sales} onChange={e=>set('sales',e.target.value)}><option value="">-- เลือกเซลส์ --</option>{users.filter(u=>u.role==='Sales').map(u=><option key={u.userId} value={u.name}>{u.name}</option>)}</select></div>}
