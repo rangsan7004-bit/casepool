@@ -209,8 +209,8 @@ function formatContact(contact){
 // ============================================================
 // API + CACHE LAYER
 // ============================================================
-const _cache = {};          // key → {data, ts, lastUpdate}
-const CACHE_TTL = 60000;    // ⚡ 60 วินาที (server cache invalidate อยู่แล้ว ปลอดภัย)
+const _cache = {};          // key → {data, ts}
+const CACHE_TTL = 30000;    // 30 วินาที
 
 function cacheKey(action, data){
   return action + ':' + JSON.stringify(data||{});
@@ -222,36 +222,29 @@ function cacheGet(action, data){
   return null;
 }
 function cacheSet(action, data, result){
-  _cache[cacheKey(action, data)] = {data: result, ts: Date.now(), lastUpdate: result.lastUpdate||0};
-}
-// ⚡ lastUpdate check — ถ้า server ส่ง lastUpdate เดิมมา ไม่ต้อง re-render
-function cacheIsStale(action, data, newLastUpdate){
-  if(!newLastUpdate) return true;
-  const k = cacheKey(action, data);
-  const c = _cache[k];
-  if(!c) return true;
-  return newLastUpdate > (c.lastUpdate || 0);
+  _cache[cacheKey(action, data)] = {data: result, ts: Date.now()};
 }
 function cacheClear(patterns){
+  // ล้าง cache ที่เกี่ยวข้อง เช่น ['getCases','getDashboard']
   (patterns||[]).forEach(p=>{
     Object.keys(_cache).forEach(k=>{ if(k.startsWith(p)) delete _cache[k]; });
   });
 }
 
 const CACHEABLE = ['getCases','getMarket','getUsers','getBookings','getDashboard','getNotifications','getClaimedCases'];
-// ⚡ ล้าง cache เฉพาะที่เปลี่ยนจริง — ไม่ล้าง getDashboard ทุก mutation
+// actions ที่ทำให้ cache invalidate
 const INVALIDATE_MAP = {
-  addCase:         ['getCases'],          // dashboard update ใน soft reload ถัดไป
-  updateCase:      ['getCases'],          // สถานะ/เซลส์เดียว ไม่กระทบ dashboard aggregate มากนัก
-  sendToMarket:    ['getCases','getMarket'],
-  claimCase:       ['getMarket','getClaimedCases'],
-  returnCase:      ['getMarket','getClaimedCases'],
-  updateClaimed:   ['getClaimedCases'],
-  closeMarketCase: ['getMarket','getCases'],
+  addCase:      ['getCases','getDashboard'],
+  updateCase:   ['getCases','getDashboard'],
+  sendToMarket: ['getCases','getMarket','getDashboard'],
+  claimCase:    ['getMarket','getClaimedCases','getDashboard'],
+  returnCase:   ['getMarket','getClaimedCases'],
+  updateClaimed:['getClaimedCases'],
+  closeMarketCase:['getMarket','getCases'],
   adminChangeSales:['getCases'],
-  adminPullCase:   ['getCases'],
-  addBooking:      ['getBookings'],
-  updateBooking:   ['getBookings'],
+  adminPullCase:['getCases'],
+  addBooking:   ['getBookings'],
+  updateBooking:['getBookings'],
 };
 
 async function api(action, data={}) {
@@ -281,12 +274,7 @@ async function api(action, data={}) {
     try{result=JSON.parse(text);}catch(e){result={success:false,error:'Parse error: '+text.slice(0,100)};}
 
     // เก็บ cache และ invalidate
-    if(CACHEABLE.includes(action) && result.success){
-      // ⚡ อัปเดต cache เฉพาะถ้า lastUpdate ใหม่กว่า (ป้องกัน stale overwrite)
-      if(cacheIsStale(action, data, result.lastUpdate)){
-        cacheSet(action, data, result);
-      }
-    }
+    if(CACHEABLE.includes(action) && result.success) cacheSet(action, data, result);
     if(INVALIDATE_MAP[action]) cacheClear(INVALIDATE_MAP[action]);
 
     return result;
@@ -2418,7 +2406,7 @@ function LoginPage({onLogin}){
         ⚙️ Demo Mode — ยังไม่ได้เชื่อม Google Sheets<br/>ลอง: admin/admin1234 หรือ fab/fab1234
       </div>}
       {error&&<div style={{background:'rgba(248,81,73,.1)',border:'1px solid var(--red)',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:13,color:'var(--red)'}}>{error}</div>}
-      <div className="form-group"><label>Username</label><input value={username} onChange={e=>setUsername(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} placeholder="เช่น fab, paint, peer" autoComplete="username"/></div>
+      <div className="form-group"><label>Username</label><input value={username} onChange={e=>setUsername(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} placeholder="กรอก Username ของคุณ" autoComplete="username"/></div>
       <div className="form-group">
         <label>รหัสผ่าน</label>
         <div style={{position:'relative'}}>
