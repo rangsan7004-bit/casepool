@@ -190,13 +190,15 @@ async function api(action, data={}) {
     let url, opts;
     if(isGet) {
       const q=new URLSearchParams({action,...data}).toString();
-      url=API_URL+'?'+q; opts={method:'GET'};
+      url=API_URL+'?'+q;
+      opts={method:'GET',redirect:'follow',mode:'cors'};
     } else {
       url=API_URL+'?action='+action;
-      opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)};
+      opts={method:'POST',redirect:'follow',mode:'cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(data)};
     }
     const r=await fetch(url, opts);
-    return await r.json();
+    const text=await r.text();
+    try{return JSON.parse(text);}catch(e){return {success:false,error:'Parse error: '+text.slice(0,100)};}
   } catch(e) {
     return {success:false,error:e.toString()};
   }
