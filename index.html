@@ -1678,17 +1678,93 @@ function SalesClaimedCases({currentUser,users}){
 function SalesDashboard({currentUser}){
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(true);
-  useEffect(()=>{api('getDashboard',{role:'Sales',sales:currentUser.name}).then(r=>{if(r.success)setData(r.data);setLoading(false);});},[currentUser.name]);
+  const [userInfo,setUserInfo]=useState(null);
+
+  useEffect(()=>{
+    Promise.all([
+      api('getDashboard',{role:'Sales',sales:currentUser.name}),
+      api('getUsers')
+    ]).then(([dr,ur])=>{
+      if(dr.success) setData(dr.data);
+      if(ur.success){
+        const me=(ur.data||[]).find(u=>u.name===currentUser.name||u.username===currentUser.username);
+        setUserInfo(me||null);
+      }
+      setLoading(false);
+    });
+  },[currentUser.name]);
+
   if(loading)return <div className="page"><Loading/></div>;
   if(!data)return <div className="page"><p>ไม่พบข้อมูล</p></div>;
 
+  // คำนวณวันทำงาน
+  function calcDaysWorked(startdate){
+    if(!startdate) return null;
+    const s=String(startdate).trim();
+    let d;
+    // รองรับ dd/MM/yyyy หรือ yyyy-MM-dd
+    if(s.includes('/')){
+      const parts=s.split('/');
+      if(parts.length>=3){
+        const [dd,mm,yyyy]=parts;
+        d=new Date(parseInt(yyyy),parseInt(mm)-1,parseInt(dd));
+      }
+    } else {
+      d=new Date(s);
+    }
+    if(!d||isNaN(d)) return null;
+    const diff=Math.floor((Date.now()-d.getTime())/(1000*60*60*24));
+    return diff>=0?diff:null;
+  }
+
+  function formatStartDate(startdate){
+    if(!startdate) return null;
+    const s=String(startdate).trim();
+    if(s.includes('/')){
+      const parts=s.split('/');
+      if(parts.length>=3) return `${parts[0]}/${parts[1]}/${parts[2]}`;
+    }
+    if(s.includes('-')){
+      const d=new Date(s);
+      if(!isNaN(d)) return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+    }
+    return s;
+  }
+
+  const startdate = userInfo?.startdate || currentUser.startdate;
+  const daysWorked = calcDaysWorked(startdate);
+  const yearsMonths = daysWorked!=null
+    ? (()=>{
+        const y=Math.floor(daysWorked/365);
+        const m=Math.floor((daysWorked%365)/30);
+        const d=daysWorked%30;
+        if(y>0&&m>0) return `${y} ปี ${m} เดือน`;
+        if(y>0) return `${y} ปี`;
+        if(m>0&&d>0) return `${m} เดือน ${d} วัน`;
+        if(m>0) return `${m} เดือน`;
+        return `${daysWorked} วัน`;
+      })()
+    : null;
+
   return <div className="page">
     <div className="page-hd"><div className="page-title">📊 แดชบอร์ดของฉัน</div></div>
-    <div style={{display:'flex',gap:12,marginBottom:20}}>
+    <div style={{display:'flex',gap:12,marginBottom:20,alignItems:'center'}}>
       <div style={{width:64,height:64,borderRadius:'50%',background:'var(--bg3)',border:'2px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',flexShrink:0}}>
         {currentUser.avatar?<img src={currentUser.avatar} style={{width:'100%',height:'100%',objectFit:'cover'}}/>:<Ico.user/>}
       </div>
-      <div><div style={{fontWeight:700,fontSize:18}}>{currentUser.name}</div><div style={{fontSize:13,color:'var(--text2)'}}>Sales · ประจำเดือนนี้</div></div>
+      <div>
+        <div style={{fontWeight:700,fontSize:18}}>{currentUser.name}</div>
+        <div style={{fontSize:13,color:'var(--text2)'}}>Sales · ประจำเดือนนี้</div>
+        {startdate&&<div style={{marginTop:5,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+          <span style={{fontSize:12,color:'var(--text3)'}}>📅 เริ่ม {formatStartDate(startdate)}</span>
+          {yearsMonths&&<span style={{
+            fontSize:12,fontWeight:700,
+            background:'rgba(88,166,255,.12)',color:'var(--blue)',
+            border:'1px solid rgba(88,166,255,.25)',
+            borderRadius:20,padding:'2px 10px'
+          }}>⏱ {yearsMonths} ({daysWorked} วัน)</span>}
+        </div>}
+      </div>
     </div>
     <div className="stat-grid">
       {[['เคสของฉัน',data.currentCases||0,'var(--blue)'],['รับตลาด',data.claimedCases||0,'var(--purple)'],['ปล่อยแล้ว',data.sold||0,'var(--green)']].map(([l,v,c])=>
