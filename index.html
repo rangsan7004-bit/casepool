@@ -1291,50 +1291,72 @@ function SalesMarket({currentUser}){
   const [cases,setCases]=useState([]);
   const [claimedCases,setClaimedCases]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [claiming,setClaiming]=useState(null);
-  const [msg,setMsg]=useState('');
-  const [dashboard,setDashboard]=useState(null);
+  const [claimedIds,setClaimedIds]=useState(new Set()); // optimistic track
+  const [skippedIds,setSkippedIds]=useState(new Set()); // optimistic track
+  const [toast,setToast]=useState(null); // {msg, type:'ok'|'err'}
   const [leaderboard,setLeaderboard]=useState([]);
 
-  const load=useCallback(()=>{
-    setLoading(true);
+  const showToast=(msg,type='ok')=>{
+    setToast({msg,type});
+    setTimeout(()=>setToast(null),3500);
+  };
+
+  const load=useCallback((silent=false)=>{
+    if(!silent) setLoading(true);
     Promise.all([
       api('getMarket',{sales:currentUser.name}),
       api('getClaimedCases',{sales:currentUser.name}),
       api('getDashboard',{role:'Admin'})
     ]).then(([mr,cr,dr])=>{
-      if(mr.success)setCases((mr.data||[]).filter(c=>c.old_sales!==currentUser.name));
-      if(cr.success)setClaimedCases(cr.data||[]);
-      if(dr.success){setLeaderboard(dr.data?.sales||[]);}
+      if(mr.success) setCases((mr.data||[]).filter(c=>c.old_sales!==currentUser.name));
+      if(cr.success) setClaimedCases(cr.data||[]);
+      if(dr.success) setLeaderboard(dr.data?.sales||[]);
       setLoading(false);
+      // sync: clear optimistic sets after real data arrives
+      setClaimedIds(new Set());
+      setSkippedIds(new Set());
     });
   },[currentUser.name]);
   useEffect(()=>{load();},[load]);
 
   async function claim(caseId){
-    setClaiming(caseId);
+    // Optimistic: ซ่อนการ์ดทันที + แสดง toast ทันที
+    setClaimedIds(prev=>new Set([...prev, caseId]));
+    setClaimedCases(prev=>[...prev,{caseID:caseId,sale:currentUser.name}]);
+    showToast('✅ รับเคส '+caseId+' สำเร็จ! ดูได้ที่ "รับจากตลาด"','ok');
+
+    // sync API ข้างหลัง
     const r=await api('claimCase',{caseId,sales:currentUser.name});
-    setClaiming(null);
-    if(r.success){setMsg('✅ รับเคสสำเร็จ! ตรวจสอบได้ที่หน้า "รับจากตลาด"');load();setTimeout(()=>setMsg(''),4000);}
-    else{setMsg('❌ '+r.error);setTimeout(()=>setMsg(''),3000);}
+    if(!r.success){
+      // rollback ถ้า error
+      setClaimedIds(prev=>{const s=new Set(prev);s.delete(caseId);return s;});
+      setClaimedCases(prev=>prev.filter(c=>c.caseID!==caseId));
+      showToast('❌ '+(r.error||'รับเคสไม่สำเร็จ ลองใหม่'),'err');
+    } else {
+      // silent reload เพื่อ sync ข้อมูลจริง (ไม่กระตุก)
+      setTimeout(()=>load(true), 2000);
+    }
   }
 
   async function notInterested(caseId){
+    // Optimistic: ซ่อนการ์ดทันที
+    setSkippedIds(prev=>new Set([...prev, caseId]));
+    // sync API ข้างหลัง
     await api('returnCase',{caseId,sales:'_skip_'+currentUser.name});
-    load();
+    setTimeout(()=>load(true), 1000);
   }
 
   function getDateBadge(c){
     const id=String(c.ID||'');
-    if(id.length>=4){const yy=id.slice(0,2),mm=id.slice(2,4);return `25${yy} (พ.ศ.${parseInt('25'+yy)+543-2500})`;}
+    if(id.length>=4){const yy=id.slice(0,2),mm=id.slice(2,4);return `25${yy}`;}
     return '';
   }
 
+  // กรองการ์ดที่ถูก claim/skip ออก (optimistic)
+  const visibleCases=cases.filter(c=>!claimedIds.has(c.ID)&&!skippedIds.has(c.ID));
   const myStats=leaderboard.find(s=>s.name===currentUser.name)||{};
-  const totalInMarket=cases.length;
-  const myClaimed=claimedCases.length;
-
-  // Leaderboard sorted by claimed
+  const totalInMarket=visibleCases.length;
+  const myClaimed=claimedCases.length+(claimedIds.size);
   const lbSorted=[...leaderboard].sort((a,b)=>(b.claimedCases||0)-(a.claimedCases||0));
 
   return <div className="mk-page">
@@ -1345,14 +1367,12 @@ function SalesMarket({currentUser}){
           <div style={{fontSize:20,fontWeight:800,display:'flex',alignItems:'center',gap:8}}>🎯 ตลาดเคส</div>
           <div style={{fontSize:13,color:'var(--text2)',marginTop:4}}>เลือกลูกค้าที่ใช่คนดูแล — ใครไวได้ก่อน</div>
         </div>
-        <button className="btn btn-ghost" onClick={load} style={{fontSize:13}}>🔄</button>
+        <button className="btn btn-ghost" onClick={()=>load(false)} style={{fontSize:13}}>🔄</button>
       </div>
       <div className="mk-stats">
         {[
           ['ว่างอยู่',totalInMarket,'var(--blue)'],
-          ['มีเจ้าของแล้ว',0,'var(--orange)'],
           ['ของฉัน',myClaimed,'var(--green)'],
-          ['ทั้งหมด',totalInMarket,'var(--text)']
         ].map(([l,v,c])=>
           <div key={l} className="mk-stat"><div className="mk-stat-num" style={{color:c}}>{v}</div><div className="mk-stat-lbl">{l}</div></div>
         )}
@@ -1362,17 +1382,26 @@ function SalesMarket({currentUser}){
     <div className="mk-body">
       {/* Cards Area */}
       <div className="mk-cards-area">
-        {msg&&<div style={{background:msg.startsWith('✅')?'rgba(63,185,80,.1)':'rgba(248,81,73,.1)',border:`1px solid ${msg.startsWith('✅')?'var(--green)':'var(--red)'}`,padding:'10px 16px',borderRadius:8,marginBottom:14,fontSize:13}}>{msg}</div>}
-        {loading?<Loading/>:cases.length===0?
+        {/* Toast notification */}
+        {toast&&<div style={{
+          background:toast.type==='ok'?'rgba(63,185,80,.12)':'rgba(248,81,73,.12)',
+          border:`1px solid ${toast.type==='ok'?'var(--green)':'var(--red)'}`,
+          padding:'10px 16px',borderRadius:8,marginBottom:14,fontSize:13,
+          display:'flex',alignItems:'center',gap:8
+        }}>
+          {toast.msg}
+        </div>}
+
+        {loading?<SkeletonCards n={6}/>:visibleCases.length===0?
         <div style={{textAlign:'center',padding:60,color:'var(--text2)'}}>
           <div style={{fontSize:48,marginBottom:12}}>📭</div>
           <div style={{fontSize:16,fontWeight:600}}>ไม่มีเคสในตลาดสำหรับคุณ</div>
           <div style={{fontSize:13,marginTop:8}}>รอเคสใหม่เข้ามา หรือเช็คอีกครั้งในภายหลัง</div>
         </div>:
         <>
-          <div style={{fontSize:13,color:'var(--text2)',marginBottom:12}}>พบ {cases.length} เคส ที่รอคนดูแล</div>
+          <div style={{fontSize:13,color:'var(--text2)',marginBottom:12}}>พบ {visibleCases.length} เคส ที่รอคนดูแล</div>
           <div className="mk-cards-grid">
-            {cases.map((c,i)=><div key={i} className="mkc">
+            {visibleCases.map((c,i)=><div key={i} className="mkc">
               <div className="mkc-top">
                 <span className="mkc-id">{c.ID}</span>
                 <span className="mkc-date">📅 {getDateBadge(c)}</span>
@@ -1388,10 +1417,24 @@ function SalesMarket({currentUser}){
               </div>
               {c.report&&<div className="mkc-report">{String(c.report).slice(0,130)}{c.report.length>130?'...':''}</div>}
               <div className="mkc-actions">
-                <button className="btn-claim" onClick={()=>claim(c.ID)} disabled={claiming===c.ID}>
-                  {claiming===c.ID?'⏳ กำลังรับ...':'รับเคสนี้ →'}
+                <button className="btn-claim" onClick={()=>claim(c.ID)}>
+                  รับเคสนี้ →
                 </button>
-                <button className="btn-skip" onClick={()=>notInterested(c.ID)} title="ไม่สนใจ">✕</button>
+                <button
+                  onClick={()=>notInterested(c.ID)}
+                  title="ไม่สนใจ / ข้ามเคสนี้"
+                  style={{
+                    background:'rgba(248,81,73,.12)',
+                    color:'var(--red)',
+                    border:'1px solid rgba(248,81,73,.3)',
+                    borderRadius:8,padding:'10px 14px',
+                    fontSize:15,cursor:'pointer',
+                    transition:'all .15s',fontWeight:700,
+                    lineHeight:1
+                  }}
+                  onMouseOver={e=>e.currentTarget.style.background='rgba(248,81,73,.25)'}
+                  onMouseOut={e=>e.currentTarget.style.background='rgba(248,81,73,.12)'}
+                >✕</button>
               </div>
             </div>)}
           </div>
@@ -1400,7 +1443,6 @@ function SalesMarket({currentUser}){
 
       {/* Sidebar */}
       <div className="mk-sidebar">
-        {/* Leaderboard */}
         <div className="mk-sb-section">
           <div className="mk-sb-title">🏆 Leaderboard รับเคส</div>
           {lbSorted.length===0?<div style={{fontSize:12,color:'var(--text2)',textAlign:'center',padding:'12px 0'}}>ยังไม่มีข้อมูล</div>:
@@ -1414,8 +1456,6 @@ function SalesMarket({currentUser}){
             <span style={{fontWeight:700,color:'var(--blue)',fontSize:14}}>{s.claimedCases||0}</span>
           </div>)}
         </div>
-
-        {/* My Stats */}
         <div className="mk-sb-section">
           <div className="mk-sb-title">📊 สถิติของฉัน</div>
           <div style={{display:'flex',flex:1,flexDirection:'column',gap:6}}>
