@@ -776,8 +776,13 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
   }
 
   async function doDelete(){
-    onUpdated(); onClose(); // optimistic: ปิดทันที
-    try{await api('sendToMarket',{caseId,sales:caseData.sales||currentUser.name});}catch(e){}
+    onClose();
+    try{
+      // เปลี่ยนสถานะเป็น ปิดเคส ก่อน แล้วค่อยส่งตลาด
+      await api('updateCase',{caseid:caseId,status:'ปิดเคส',changedBy:currentUser.name,detail:'แอดมินลบเคส'});
+      await api('sendToMarket',{caseId,sales:caseData.sales||currentUser.name});
+    }catch(e){}
+    onUpdated(); // reload หลัง API เสร็จ
   }
 
   if(showHistory) return <HistoryModal caseId={caseId} onClose={()=>setShowHistory(false)}/>;
@@ -926,7 +931,7 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
         </div>
       </div>
     </div>
-    {confirmDel&&<Confirm msg={"ส่งเคส "+caseId+" ขึ้นตลาด / ลบออกจากรายการ?"} onOk={()=>{setConfirmDel(false);doDelete();}} onCancel={()=>setConfirmDel(false)}/>}
+    {confirmDel&&<Confirm msg={'ลบเคส '+caseId+' ? (สถานะจะเปลี่ยนเป็น "ปิดเคส" และส่งขึ้นตลาด)'} onOk={()=>{setConfirmDel(false);doDelete();}} onCancel={()=>setConfirmDel(false)}/>}
   </>;
 }
 
