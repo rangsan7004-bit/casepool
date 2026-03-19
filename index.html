@@ -805,7 +805,7 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
                 <span style={{fontWeight:600}}>{caseData.customername||caseData.name||'-'}</span>
                 {(caseData.customername||caseData.name)&&
                   <button className="btn btn-primary" style={{padding:'3px 14px',fontSize:12,borderRadius:20}}
-                    onClick={()=>{copyText(caseData.customername||caseData.name||'');}}}>
+                    onClick={()=>copyText(caseData.customername||caseData.name||'')}>
                     Copy
                   </button>
                 }
