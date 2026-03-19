@@ -193,7 +193,7 @@ const {useState,useEffect,useCallback,useRef,createContext,useContext} = React;
 // ============================================================
 // ⚙️ CONFIG — ใส่ URL ของ Apps Script Web App ตรงนี้
 // ============================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycbyQGnB4J-atPjVtTLBL4iAiacFbY7whsq38B2UCKcoKSI4rDI7gIGJO7PbOOf-iLWYS/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwzhPrky-oKNtXc_mpVDthMbtTfEKenYCyRbhZmSyp0fP1cHAzpwUszu4ECcy2miHrKHQ/exec';
 
 // ── Theme persistence ──
 (function(){
@@ -784,12 +784,16 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
   }
 
   async function doDelete(){
+    if(!confirm('ยืนยันการลบเคสนี้? ข้อมูลจะถูกลบออกจากทุกส่วนของระบบ')) return;
     onClose();
-    // ส่งทั้ง caseId และ caseid รองรับทุก format
     const r = await api('deleteCase',{caseId, caseid:caseId, deletedBy:currentUser.name});
-    // ล้าง cache ก่อน reload เสมอ
-    cacheClear(['getCases','getMarket','getDashboard','getClaimedCases']);
-    onUpdated();
+    if(r.success) {
+      alert('ลบข้อมูลเรียบร้อยแล้ว');
+      cacheClear(['getCases','getMarket','getDashboard','getClaimedCases','getHistory','getNotifications']);
+      onUpdated();
+    } else {
+      alert('เกิดข้อผิดพลาด: ' + (r.error || 'ไม่สามารถลบได้'));
+    }
   }
 
   if(showHistory) return <HistoryModal caseId={caseId} onClose={()=>setShowHistory(false)}/>;
