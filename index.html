@@ -193,7 +193,7 @@ const {useState,useEffect,useCallback,useRef,createContext,useContext} = React;
 // ============================================================
 // ⚙️ CONFIG — ใส่ URL ของ Apps Script Web App ตรงนี้
 // ============================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycby1Cv_ggGQV18Xc53ZVhnTfjzRu2ukYU8tqLEN3ULqzbHtnZyVfiNMlkqjRWRaUNS90/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbyQGnB4J-atPjVtTLBL4iAiacFbY7whsq38B2UCKcoKSI4rDI7gIGJO7PbOOf-iLWYS/exec';
 
 // ── Theme persistence ──
 (function(){
@@ -3268,17 +3268,17 @@ function SalesApp({currentUser,onLogout}){
 // ============================================================
 function App(){
   const [user,setUser]=useState(()=>{
-    try{const s=sessionStorage.getItem('casepool_user');return s?JSON.parse(s):null;}catch{return null;}
+    try{const s=localStorage.getItem('casepool_user');return s?JSON.parse(s):null;}catch{return null;}
   });
 
   const [showLogoutConfirm,setShowLogoutConfirm]=useState(false);
 
   function handleLogin(u){
-    sessionStorage.setItem('casepool_user',JSON.stringify(u));
+    localStorage.setItem('casepool_user',JSON.stringify(u));
     setUser(u);
   }
   function handleLogout(){
-    sessionStorage.removeItem('casepool_user');
+    localStorage.removeItem('casepool_user');
     // ล้าง cache ทั้งหมดตอน logout
     Object.keys(_cache).forEach(k=>delete _cache[k]);
     setUser(null);
