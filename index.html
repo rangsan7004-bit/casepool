@@ -2125,33 +2125,34 @@ function usePushNotif(apiUrl, salesName){
 
   useEffect(()=>{
     if(!salesName||!apiUrl) return;
-    // โหลด seen ids จาก localStorage
+    // ตรวจสอบ Notification API แบบปลอดภัย (iOS Safari อาจไม่มี)
+    var notifPerm='';
+    try{ notifPerm=(typeof Notification!=='undefined')?Notification.permission:''; }catch(e){ return; }
     try{const s=JSON.parse(localStorage.getItem('cp_seen_notifs')||'[]');seenRef.current=new Set(s);}catch(e){}
-    if(typeof Notification==='undefined'||Notification.permission!=='granted') return;
+    if(notifPerm!=='granted') return;
 
-    async function poll(){
+    function poll(){
       if(document.hidden) return;
-      try{
-        const url=apiUrl+'?action=getNotifications&sales='+encodeURIComponent(salesName);
-        const r=await fetch(url,{method:'GET',mode:'cors'});
-        const j=await r.json();
-        const fresh=(j.data||[]).filter(n=>n['สถานะ']==='unread'&&!seenRef.current.has(n.notifId));
-        if(fresh.length>0){
-          fresh.forEach(n=>seenRef.current.add(n.notifId));
-          try{localStorage.setItem('cp_seen_notifs',JSON.stringify([...seenRef.current]));}catch(e){}
-          const body=fresh.length===1?fresh[0].message:fresh.length+' การแจ้งเตือนใหม่';
-          new Notification('🚗 CasePool',{body,icon:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',tag:'casepool'});
-        }
-      }catch(err){}
+      fetch(apiUrl+'?action=getNotifications&sales='+encodeURIComponent(salesName),{method:'GET',mode:'cors'})
+        .then(function(r){return r.json();})
+        .then(function(j){
+          var fresh=(j.data||[]).filter(function(n){return n['สถานะ']==='unread'&&!seenRef.current.has(n.notifId);});
+          if(fresh.length>0){
+            fresh.forEach(function(n){seenRef.current.add(n.notifId);});
+            try{localStorage.setItem('cp_seen_notifs',JSON.stringify([...seenRef.current]));}catch(e){}
+            var body=fresh.length===1?fresh[0].message:fresh.length+' การแจ้งเตือนใหม่';
+            try{new Notification('🚗 CasePool',{body:body,icon:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',tag:'casepool'});}catch(e){}
+          }
+        }).catch(function(){});
     }
-    const t=setInterval(poll,120000);
-    return ()=>clearInterval(t);
-  },[apiUrl,salesName,Notification?.permission]);
+    var t=setInterval(poll,120000);
+    return function(){clearInterval(t);};
+  },[apiUrl,salesName]);
 }
 
 function PushNotifBanner({currentUser}){
-  const supported=typeof Notification!=='undefined';
-  const [perm,setPerm]=useState(supported?Notification.permission:'unsupported');
+  const supported=(function(){try{return typeof Notification!=='undefined';}catch(e){return false;}})();
+  const [perm,setPerm]=useState(function(){try{return supported?Notification.permission:'unsupported';}catch(e){return 'unsupported';}});
   const [installable,setInstallable]=useState(!!window._deferredInstall);
   const [dismissed,setDismissed]=useState(()=>{try{return !!localStorage.getItem('cp_pn_dismissed');}catch(e){return false;}});
   const [asking,setAsking]=useState(false);
