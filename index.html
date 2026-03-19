@@ -310,6 +310,7 @@ const INVALIDATE_MAP = {
   closeMarketCase:['getMarket','getCases'],
   adminChangeSales:['getCases'],
   adminPullCase:['getCases'],
+  deleteCase:     ['getCases','getMarket','getDashboard'],
   addBooking:   ['getBookings'],
   updateBooking:['getBookings'],
 };
@@ -474,6 +475,13 @@ function demoApi(action, data){
     case 'getHistory': return {success:true,data:data.caseId?DEMO.history.filter(h=>String(h['รหัสเคส'])===String(data.caseId)):DEMO.history};
     case 'getNotifications': return {success:true,data:data.sales?DEMO.notifications.filter(n=>n['เซลส์']===data.sales):DEMO.notifications};
     case 'markNotifRead': {const idx=DEMO.notifications.findIndex(n=>n.notifId===data.notifId);if(idx>=0)DEMO.notifications[idx]['สถานะ']='read';return {success:true};}
+    case 'deleteCase': {
+      const idx=DEMO.cases.findIndex(c=>String(c.caseid)===String(data.caseId));
+      if(idx>=0) DEMO.cases.splice(idx,1);
+      const mi=DEMO.market.findIndex(m=>String(m.ID)===String(data.caseId));
+      if(mi>=0) DEMO.market.splice(mi,1);
+      return {success:true};
+    }
     case 'adminPullCase': case 'adminChangeSales': {const idx=DEMO.cases.findIndex(c=>String(c.caseid)===String(data.caseId));if(idx>=0)DEMO.cases[idx].sales=data.newSales;return {success:true};}
     default: return {success:true,data:[]};
   }
@@ -778,11 +786,9 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
   async function doDelete(){
     onClose();
     try{
-      // เปลี่ยนสถานะเป็น ปิดเคส ก่อน แล้วค่อยส่งตลาด
-      await api('updateCase',{caseid:caseId,status:'ปิดเคส',changedBy:currentUser.name,detail:'แอดมินลบเคส'});
-      await api('sendToMarket',{caseId,sales:caseData.sales||currentUser.name});
+      await api('deleteCase',{caseId, deletedBy:currentUser.name});
     }catch(e){}
-    onUpdated(); // reload หลัง API เสร็จ
+    onUpdated();
   }
 
   if(showHistory) return <HistoryModal caseId={caseId} onClose={()=>setShowHistory(false)}/>;
@@ -931,7 +937,7 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
         </div>
       </div>
     </div>
-    {confirmDel&&<Confirm msg={'ลบเคส '+caseId+' ? (สถานะจะเปลี่ยนเป็น "ปิดเคส" และส่งขึ้นตลาด)'} onOk={()=>{setConfirmDel(false);doDelete();}} onCancel={()=>setConfirmDel(false)}/>}
+    {confirmDel&&<Confirm msg={'ลบเคส '+caseId+' ออกจากระบบ? (ไม่สามารถกู้คืนได้)'} onOk={()=>{setConfirmDel(false);doDelete();}} onCancel={()=>setConfirmDel(false)}/>}
   </>;
 }
 
