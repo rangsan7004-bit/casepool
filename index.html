@@ -1093,7 +1093,11 @@ function AddCaseModal({users,currentUser,onClose,onAdded}){
     setLoading(true);
     const r=await api('addCase',{...form});
     setLoading(false);
-    if(r.success){onAdded();onClose();}
+    if(r.success){
+      // trigger push notification ทันทีให้เซลส์ที่ได้รับเคส
+      try{window.cpTriggerPushPoll&&window.cpTriggerPushPoll(2000);}catch(e){}
+      onAdded();onClose();
+    }
     else alert(r.error||'เกิดข้อผิดพลาด');
   }
   return <Modal title="➕ เพิ่มข้อมูลลูกค้า" onClose={onClose} footer={<>
@@ -2125,14 +2129,14 @@ function usePushNotif(apiUrl, salesName){
 
   useEffect(()=>{
     if(!salesName||!apiUrl) return;
-    // ตรวจสอบ Notification API แบบปลอดภัย (iOS Safari อาจไม่มี)
     var notifPerm='';
     try{ notifPerm=(typeof Notification!=='undefined')?Notification.permission:''; }catch(e){ return; }
     try{const s=JSON.parse(localStorage.getItem('cp_seen_notifs')||'[]');seenRef.current=new Set(s);}catch(e){}
-    if(notifPerm!=='granted') return;
 
     function poll(){
-      if(document.hidden) return;
+      var perm='';
+      try{perm=(typeof Notification!=='undefined')?Notification.permission:'';}catch(e){return;}
+      if(perm!=='granted') return;
       fetch(apiUrl+'?action=getNotifications&sales='+encodeURIComponent(salesName),{method:'GET',mode:'cors'})
         .then(function(r){return r.json();})
         .then(function(j){
@@ -2141,12 +2145,19 @@ function usePushNotif(apiUrl, salesName){
             fresh.forEach(function(n){seenRef.current.add(n.notifId);});
             try{localStorage.setItem('cp_seen_notifs',JSON.stringify([...seenRef.current]));}catch(e){}
             var body=fresh.length===1?fresh[0].message:fresh.length+' การแจ้งเตือนใหม่';
-            try{new Notification('🚗 CasePool',{body:body,icon:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',tag:'casepool'});}catch(e){}
+            try{new Notification('🚗 CasePool',{body:body,icon:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',tag:'casepool',renotify:true});}catch(e){}
           }
         }).catch(function(){});
     }
+
+    // ลงทะเบียน global trigger — ให้ส่วนอื่นเรียก poll ได้ทันที
+    window.cpTriggerPushPoll = function(delayMs){
+      setTimeout(poll, delayMs||1500); // หน่วงเล็กน้อยให้ backend บันทึก notif ก่อน
+    };
+
+    // poll ทุก 2 นาที
     var t=setInterval(poll,120000);
-    return function(){clearInterval(t);};
+    return function(){ clearInterval(t); window.cpTriggerPushPoll=null; };
   },[apiUrl,salesName]);
 }
 
