@@ -176,156 +176,16 @@ tr.clickable{cursor:pointer;}
 <body>
 <div id="root"></div>
 
-<!-- ══ PWA Manifest (inline) ══ -->
+<!-- PWA manifest inline -->
 <script>
-(function(){
-  const manifest={name:'CasePool',short_name:'CasePool',start_url:location.href,display:'standalone',background_color:'#0d1117',theme_color:'#161b22',orientation:'portrait',icons:[{src:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',sizes:'192x192',type:'image/png'},{src:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',sizes:'512x512',type:'image/png'}]};
-  const blob=new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'});
-  const link=document.createElement('link');link.rel='manifest';link.href=URL.createObjectURL(blob);document.head.appendChild(link);
-})();
-</script>
-
-<!-- ══ Service Worker + Push Engine ══ -->
-<script>
-// ── Embed SW code as string → register via blob (Chrome/Edge/Android support) ──
-const SW_CODE = `
-const POLL_URL = '{{API_URL}}';
-const POLL_INTERVAL = 120000; // 2 min
-let lastNotifIds = new Set();
-
-self.addEventListener('install', e => self.skipWaiting());
-self.addEventListener('activate', e => { e.waitUntil(clients.claim()); startPolling(); });
-
-// รับ message จาก main thread
-self.addEventListener('message', e => {
-  if(e.data && e.data.type === 'INIT'){
-    self.SALES_NAME = e.data.salesName;
-    self.API_URL    = e.data.apiUrl;
-    if(e.data.seenIds) lastNotifIds = new Set(e.data.seenIds);
-    startPolling();
-  }
-  if(e.data && e.data.type === 'MARK_SEEN'){
-    (e.data.ids||[]).forEach(id => lastNotifIds.add(id));
-  }
-});
-
-self.addEventListener('notificationclick', e => {
-  e.notification.close();
-  e.waitUntil(clients.matchAll({type:'window'}).then(cs => {
-    if(cs.length > 0){ cs[0].focus(); cs[0].postMessage({type:'NOTIF_CLICK'}); }
-    else self.clients.openWindow(self.registration.scope);
-  }));
-});
-
-let _pollTimer = null;
-function startPolling(){
-  if(!self.SALES_NAME || !self.API_URL) return;
-  if(_pollTimer) clearInterval(_pollTimer);
-  poll();
-  _pollTimer = setInterval(poll, POLL_INTERVAL);
-}
-
-async function poll(){
-  if(!self.SALES_NAME || !self.API_URL) return;
-  try{
-    const url = self.API_URL + '?action=getNotifications&sales=' + encodeURIComponent(self.SALES_NAME);
-    const r   = await fetch(url, {mode:'cors'});
-    const j   = await r.json();
-    const notifs = (j.data || []).filter(n => n['สถานะ'] === 'unread');
-    const newOnes = notifs.filter(n => !lastNotifIds.has(n.notifId));
-    if(newOnes.length > 0){
-      newOnes.forEach(n => lastNotifIds.add(n.notifId));
-      const body = newOnes.length === 1 ? newOnes[0].message : newOnes.length + ' การแจ้งเตือนใหม่';
-      self.registration.showNotification('🚗 CasePool', {
-        body, icon: 'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',
-        badge:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',
-        tag:'casepool-notif', renotify: true,
-        vibrate:[200,100,200],
-        data:{ url: self.registration.scope }
-      });
-    }
-  } catch(err){ /* ไม่มี network หรือ API offline */ }
-}
-`;
-
-// ── ลงทะเบียน SW จาก Blob URL ──
-window._cpSW = null;
-window._cpSWReg = null;
-
-async function registerPushSW(apiUrl, salesName, seenIds){
-  if(!('serviceWorker' in navigator) || !('Notification' in window)) return false;
-  try{
-    // ใส่ API URL จริงลงใน SW code ก่อน register
-    const finalCode = SW_CODE.replace('{{API_URL}}', apiUrl);
-    const blob = new Blob([finalCode], {type:'application/javascript'});
-    const swUrl = URL.createObjectURL(blob);
-
-    // Chrome/Edge/Android รองรับ blob SW registration
-    const reg = await navigator.serviceWorker.register(swUrl, {scope: './'}).catch(()=>null);
-    if(!reg){
-      // Fallback: ถ้า blob ไม่ได้ → ใช้ polling ปกติ
-      return false;
-    }
-    window._cpSWReg = reg;
-    // ส่ง config ให้ SW
-    const sw = reg.installing || reg.waiting || reg.active;
-    if(sw){
-      sw.postMessage({type:'INIT', salesName, apiUrl, seenIds: [...(seenIds||[])]});
-    }
-    navigator.serviceWorker.addEventListener('message', e => {
-      if(e.data && e.data.type==='NOTIF_CLICK'){
-        // focus tab เมื่อกด notification
-        window.focus();
-      }
-    });
-    console.log('[CasePool SW] registered ✓');
-    return true;
-  } catch(err){
-    console.warn('[CasePool SW] failed, using polling fallback', err);
-    return false;
-  }
-}
-
-// ── Polling Fallback (main thread — ใช้เมื่อ SW ไม่ได้) ──
-let _fallbackTimer = null;
-let _fallbackSeen  = new Set();
-
-function startFallbackPolling(apiUrl, salesName){
-  if(_fallbackTimer) return;
-  try{ const s=JSON.parse(localStorage.getItem('cp_seen_notifs')||'[]');_fallbackSeen=new Set(s); }catch(e){}
-  _fallbackTimer = setInterval(async ()=>{
-    if(document.hidden) return; // เฉพาะตอนแอป active
-    try{
-      const url = apiUrl + '?action=getNotifications&sales=' + encodeURIComponent(salesName);
-      const r   = await fetch(url,{mode:'cors'});
-      const j   = await r.json();
-      const notifs=(j.data||[]).filter(n=>n['สถานะ']==='unread');
-      const newOnes=notifs.filter(n=>!_fallbackSeen.has(n.notifId));
-      if(newOnes.length>0 && Notification.permission==='granted'){
-        newOnes.forEach(n=>_fallbackSeen.add(n.notifId));
-        try{ localStorage.setItem('cp_seen_notifs',JSON.stringify([..._fallbackSeen])); }catch(e){}
-        const body=newOnes.length===1?newOnes[0].message:newOnes.length+' การแจ้งเตือนใหม่';
-        new Notification('🚗 CasePool',{body,icon:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',tag:'casepool-notif'});
-      }
-    }catch(err){}
-  }, 120000); // ทุก 2 นาที
-}
-
-// ── เริ่ม Push System ──
-window.initCasepoolPush = async function(apiUrl, salesName){
-  if(!('Notification' in window)) return;
-  try{ const s=JSON.parse(localStorage.getItem('cp_seen_notifs')||'[]');_fallbackSeen=new Set(s); }catch(e){}
-  const ok = await registerPushSW(apiUrl, salesName, _fallbackSeen);
-  if(!ok) startFallbackPolling(apiUrl, salesName);
-};
-
-// ── Install PWA prompt (Add to Home Screen) ──
-window._deferredInstall = null;
-window.addEventListener('beforeinstallprompt', e => {
-  e.preventDefault();
-  window._deferredInstall = e;
-  window.dispatchEvent(new CustomEvent('pwa-installable'));
-});
+try{
+  var _m={name:'CasePool',short_name:'CasePool',start_url:location.href,display:'standalone',background_color:'#0d1117',theme_color:'#161b22',icons:[{src:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',sizes:'192x192',type:'image/png'}]};
+  var _b=new Blob([JSON.stringify(_m)],{type:'application/manifest+json'});
+  var _l=document.createElement('link');_l.rel='manifest';_l.href=URL.createObjectURL(_b);document.head.appendChild(_l);
+  // PWA install prompt
+  window._deferredInstall=null;
+  window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window._deferredInstall=e;window.dispatchEvent(new CustomEvent('pwa-installable'));});
+}catch(e){}
 </script>
 <script type="text/babel">
 const {useState,useEffect,useCallback,useRef,createContext,useContext} = React;
@@ -333,7 +193,7 @@ const {useState,useEffect,useCallback,useRef,createContext,useContext} = React;
 // ============================================================
 // ⚙️ CONFIG — ใส่ URL ของ Apps Script Web App ตรงนี้
 // ============================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycbyQGnB4J-atPjVtTLBL4iAiacFbY7whsq38B2UCKcoKSI4rDI7gIGJO7PbOOf-iLWYS/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwzhPrky-oKNtXc_mpVDthMbtTfEKenYCyRbhZmSyp0fP1cHAzpwUszu4ECcy2miHrKHQ/exec';
 
 // ── Theme persistence ──
 (function(){
@@ -2257,51 +2117,86 @@ function DailyFocusPage({currentUser,onNavigate}){
 }
 
 // ============================================================
-// PUSH NOTIFICATION BANNER — ขอ permission + install PWA
+// PUSH NOTIFICATION — ขอ permission + polling ใน React
 // ============================================================
-function PushNotifBanner({currentUser}){
-  const [perm,setPerm]=useState(()=>{try{return Notification?.permission||'default';}catch(e){return 'unsupported';}});
-  const [swOk,setSwOk]=useState(false);
-  const [installable,setInstallable]=useState(!!window._deferredInstall);
-  const [dismissed,setDismissed]=useState(()=>{try{return !!localStorage.getItem('cp_pn_dismissed');}catch(e){return false;}});
+// Hook: เริ่ม push polling หลังได้ permission
+function usePushNotif(apiUrl, salesName){
+  const seenRef=useRef(new Set());
 
   useEffect(()=>{
-    const handler=()=>setInstallable(true);
-    window.addEventListener('pwa-installable',handler);
-    return ()=>window.removeEventListener('pwa-installable',handler);
+    if(!salesName||!apiUrl) return;
+    // โหลด seen ids จาก localStorage
+    try{const s=JSON.parse(localStorage.getItem('cp_seen_notifs')||'[]');seenRef.current=new Set(s);}catch(e){}
+    if(typeof Notification==='undefined'||Notification.permission!=='granted') return;
+
+    async function poll(){
+      if(document.hidden) return;
+      try{
+        const url=apiUrl+'?action=getNotifications&sales='+encodeURIComponent(salesName);
+        const r=await fetch(url,{method:'GET',mode:'cors'});
+        const j=await r.json();
+        const fresh=(j.data||[]).filter(n=>n['สถานะ']==='unread'&&!seenRef.current.has(n.notifId));
+        if(fresh.length>0){
+          fresh.forEach(n=>seenRef.current.add(n.notifId));
+          try{localStorage.setItem('cp_seen_notifs',JSON.stringify([...seenRef.current]));}catch(e){}
+          const body=fresh.length===1?fresh[0].message:fresh.length+' การแจ้งเตือนใหม่';
+          new Notification('🚗 CasePool',{body,icon:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png',tag:'casepool'});
+        }
+      }catch(err){}
+    }
+    const t=setInterval(poll,120000);
+    return ()=>clearInterval(t);
+  },[apiUrl,salesName,Notification?.permission]);
+}
+
+function PushNotifBanner({currentUser}){
+  const supported=typeof Notification!=='undefined';
+  const [perm,setPerm]=useState(supported?Notification.permission:'unsupported');
+  const [installable,setInstallable]=useState(!!window._deferredInstall);
+  const [dismissed,setDismissed]=useState(()=>{try{return !!localStorage.getItem('cp_pn_dismissed');}catch(e){return false;}});
+  const [asking,setAsking]=useState(false);
+
+  useEffect(()=>{
+    const h=()=>setInstallable(true);
+    window.addEventListener('pwa-installable',h);
+    return ()=>window.removeEventListener('pwa-installable',h);
   },[]);
 
-  if(!('Notification' in window)||perm==='unsupported'||dismissed) return null;
+  if(!supported||perm==='granted'||perm==='denied'||dismissed) return null;
 
   async function requestPerm(){
+    setAsking(true);
     const p=await Notification.requestPermission();
     setPerm(p);
+    setAsking(false);
     if(p==='granted'){
-      const ok=await window.initCasepoolPush(API_URL, currentUser.name);
-      setSwOk(!!ok);
+      new Notification('🚗 CasePool',{body:'เปิดการแจ้งเตือนสำเร็จแล้ว!',icon:'https://raw.githubusercontent.com/umhomecar03-cmyk/umhomecar/main/do.png'});
     }
   }
-  function dismiss(){setDismissed(true);try{localStorage.setItem('cp_pn_dismissed','1');}catch(e){}}
   async function installPWA(){
-    if(!window._deferredInstall)return;
+    if(!window._deferredInstall) return;
     window._deferredInstall.prompt();
     const{outcome}=await window._deferredInstall.userChoice;
-    if(outcome==='accepted') window._deferredInstall=null;
-    setInstallable(false);
+    if(outcome==='accepted'){window._deferredInstall=null;setInstallable(false);}
   }
-
-  if(perm==='granted') return null; // ได้ permission แล้ว ซ่อน banner
+  function dismiss(){setDismissed(true);try{localStorage.setItem('cp_pn_dismissed','1');}catch(e){}}
 
   return <div className="pn-banner" style={{marginBottom:14}}>
-    <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
-      <div style={{fontSize:28,flexShrink:0}}>🔔</div>
+    <div style={{display:'flex',gap:10,alignItems:'flex-start'}}>
+      <div style={{fontSize:26,flexShrink:0}}>🔔</div>
       <div style={{flex:1}}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>เปิดการแจ้งเตือนบนมือถือ</div>
-        <div style={{fontSize:12,color:'var(--text2)',marginBottom:10,lineHeight:1.6}}>รับแจ้งเตือนจากระบบถึงมือถือโดยตรง ไม่ต้องเปิดแอปค้างไว้</div>
+        <div style={{fontWeight:700,fontSize:13,marginBottom:3}}>เปิดรับการแจ้งเตือนบนมือถือ</div>
+        <div style={{fontSize:12,color:'var(--text2)',marginBottom:10,lineHeight:1.6}}>
+          รับ push notification โดยตรงบนมือถือ ไม่พลาดทุกการแจ้งเตือน
+        </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-          <button className="btn btn-primary" style={{fontSize:12,padding:'6px 14px'}} onClick={requestPerm}>เปิดการแจ้งเตือน</button>
-          {installable&&<button className="btn btn-ghost" style={{fontSize:12,padding:'6px 14px',color:'var(--purple)',border:'1px solid rgba(188,140,255,.4)'}} onClick={installPWA}>📲 ติดตั้งแอป</button>}
-          <button className="btn btn-ghost" style={{fontSize:12,padding:'6px 10px'}} onClick={dismiss}>ไม่สนใจ</button>
+          <button className="btn btn-primary" style={{fontSize:12,padding:'6px 16px'}} onClick={requestPerm} disabled={asking}>
+            {asking?'กำลังขอ...':'เปิดการแจ้งเตือน'}
+          </button>
+          {installable&&<button className="btn btn-ghost" style={{fontSize:12,padding:'6px 12px',color:'var(--purple)',border:'1px solid rgba(188,140,255,.4)'}} onClick={installPWA}>
+            📲 ติดตั้งแอป
+          </button>}
+          <button className="btn btn-ghost" style={{fontSize:12,padding:'6px 10px'}} onClick={dismiss}>ภายหลัง</button>
         </div>
       </div>
     </div>
@@ -3281,18 +3176,15 @@ function SalesApp({currentUser,onLogout}){
   const [showSearch,setShowSearch]=useState(false);
   const [showOnboarding,setShowOnboarding]=useState(false);
 
+  // Push notifications (Web Notification API polling)
+  usePushNotif(API_URL, currentUser.name);
+
   useEffect(()=>{
     api('getUsers').then(r=>{if(r.success)setUsers(r.data||[]);});
-    // Notification polling (in-app badge count)
     function refreshNotif(){api('getNotifications',{sales:currentUser.name}).then(r=>{if(r.success){const u=r.data.filter(n=>n['สถานะ']==='unread');setNotifCount(u.length);}});}
     refreshNotif();
     const t=setInterval(refreshNotif,30000);
-    // Onboarding check
     try{if(!localStorage.getItem('cp_onboarded_'+currentUser.userId))setShowOnboarding(true);}catch(e){}
-    // เริ่ม Push system ถ้าได้รับ permission แล้ว
-    if(API_URL&&'Notification' in window&&Notification.permission==='granted'){
-      window.initCasepoolPush&&window.initCasepoolPush(API_URL, currentUser.name);
-    }
     return ()=>clearInterval(t);
   },[currentUser.name,currentUser.userId]);
 
