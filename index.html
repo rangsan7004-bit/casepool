@@ -783,7 +783,6 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
   if(showHistory) return <HistoryModal caseId={caseId} onClose={()=>setShowHistory(false)}/>;
 
   return <>
-    {confirmDel&&<Confirm msg={'ส่งเคส '+caseId+' ขึ้นตลาด / ลบออกจากรายการ?'} onOk={()=>{setConfirmDel(false);doDelete();}} onCancel={()=>setConfirmDel(false)}/>}
     <div className="overlay" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div className="modal" style={{maxWidth:480,borderRadius:14}}>
 
@@ -927,6 +926,7 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
         </div>
       </div>
     </div>
+    {confirmDel&&<Confirm msg={"ส่งเคส "+caseId+" ขึ้นตลาด / ลบออกจากรายการ?"} onOk={()=>{setConfirmDel(false);doDelete();}} onCancel={()=>setConfirmDel(false)}/>}
   </>;
 }
 
