@@ -784,12 +784,10 @@ function CaseModal({caseData,users,currentUser,onClose,onUpdated}){
   }
 
   async function doDelete(){
-    if(!confirm('ยืนยันการลบเคสนี้? ข้อมูลจะถูกลบออกจากทุกส่วนของระบบ')) return;
     onClose();
     const r = await api('deleteCase',{caseId, caseid:caseId, deletedBy:currentUser.name});
-    if(r.success) {
-      alert('ลบข้อมูลเรียบร้อยแล้ว');
-      cacheClear(['getCases','getMarket','getDashboard','getClaimedCases','getHistory','getNotifications']);
+    cacheClear(['getCases','getMarket','getDashboard','getClaimedCases','getHistory','getNotifications']);
+    if(r.success){
       onUpdated();
     } else {
       alert('เกิดข้อผิดพลาด: ' + (r.error || 'ไม่สามารถลบได้'));
